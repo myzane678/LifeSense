@@ -12,6 +12,7 @@ class LifeStorageService {
 
   static const _objectTypeName = 'LifeEntry';
   static const _cachePrefix = 'life_entries_';
+  static const _guestCacheKey = 'life_entries_guest';
 
   bool lastLoadUsedLocalCache = false;
   bool lastSaveSynced = true;
@@ -123,6 +124,49 @@ class LifeStorageService {
   }
 
   Future<void> clearEntries() => deleteCloudEntries();
+
+  // ── 访客模式（无账号，纯本地） ──────────────────────────────
+
+  Future<List<LifeEntry>> loadGuestEntries() async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonText = prefs.getString(_guestCacheKey);
+    if (jsonText == null || jsonText.isEmpty) return [];
+    final decoded = jsonDecode(jsonText) as List<dynamic>;
+    return decoded
+        .map((item) => LifeEntry.fromJson(item as Map<String, dynamic>))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  }
+
+  Future<void> saveGuestEntry(LifeEntry entry) async {
+    final entries = await loadGuestEntries();
+    final byId = <String, LifeEntry>{
+      for (final e in entries) e.id: e,
+      entry.id: entry,
+    };
+    await _saveGuestEntries(byId.values.toList());
+  }
+
+  Future<void> deleteGuestEntry(LifeEntry entry) async {
+    final entries = await loadGuestEntries();
+    await _saveGuestEntries(
+      entries.where((e) => e.id != entry.id).toList(),
+    );
+  }
+
+  Future<void> clearGuestEntries() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_guestCacheKey);
+  }
+
+  Future<void> _saveGuestEntries(List<LifeEntry> entries) async {
+    final sorted = [...entries]..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _guestCacheKey,
+      jsonEncode(sorted.map((e) => e.toJson()).toList()),
+    );
+  }
 
   Future<void> _mergeLocalEntry(String uid, LifeEntry entry) async {
     final entries = await _loadLocalEntries(uid);

@@ -158,6 +158,16 @@ class _LoginScreenState extends State<LoginScreen> {
         confirmPasswordController.text != passwordController.text;
   }
 
+  Future<void> continueAsGuest() async {
+    setState(() => isSubmitting = true);
+    final authService = context.read<AuthService>();
+    final entryProvider = context.read<LifeEntryProvider>();
+    await authService.continueAsGuest();
+    entryProvider.setGuestMode(true);
+    await entryProvider.loadGuestEntries();
+    setState(() => isSubmitting = false);
+  }
+
   void showMessage(String message) {
     ScaffoldMessenger.of(
       context,
@@ -286,6 +296,26 @@ class _LoginScreenState extends State<LoginScreen> {
               TextButton(
                 onPressed: isSubmitting ? null : switchMode,
                 child: Text(isRegisterMode ? '已有账号，去登录' : '没有账号，去注册'),
+              ),
+              const SizedBox(height: 8),
+              const Divider(),
+              const SizedBox(height: 4),
+              TextButton(
+                onPressed: isSubmitting ? null : continueAsGuest,
+                style: TextButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                child: const Text('暂不登录，以访客身份使用'),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  '访客模式下数据仅存本机，换机或卸载后无法恢复。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
               ),
             ],
           ),

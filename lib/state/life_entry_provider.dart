@@ -6,7 +6,7 @@ import '../models/life_entry.dart';
 import '../services/life_score_service.dart';
 import '../services/life_storage_service.dart';
 
-enum SyncStatus { synced, localCache, syncing }
+enum SyncStatus { synced, localCache, syncing, localOnly }
 
 class LifeEntryProvider extends ChangeNotifier {
   LifeEntryProvider({
@@ -21,6 +21,15 @@ class LifeEntryProvider extends ChangeNotifier {
 
   bool _isLoading = true;
   SyncStatus _syncStatus = SyncStatus.syncing;
+  bool _isGuestMode = false;
+
+  bool get isGuestMode => _isGuestMode;
+
+  void setGuestMode(bool value) {
+    _isGuestMode = value;
+    if (value) _syncStatus = SyncStatus.localOnly;
+    notifyListeners();
+  }
 
   List<LifeEntry> get entries => List.unmodifiable(_entries);
   bool get isLoading => _isLoading;
@@ -77,6 +86,18 @@ class LifeEntryProvider extends ChangeNotifier {
       if (entry.isToday) return entry;
     }
     return null;
+  }
+
+  Future<void> loadGuestEntries() async {
+    _isLoading = true;
+    notifyListeners();
+    final loaded = await _storageService.loadGuestEntries();
+    _entries
+      ..clear()
+      ..addAll(loaded);
+    _syncStatus = SyncStatus.localOnly;
+    _isLoading = false;
+    notifyListeners();
   }
 
   Future<void> loadEntries() async {
@@ -154,6 +175,12 @@ class LifeEntryProvider extends ChangeNotifier {
     );
 
     _entries.insert(0, entry);
+    if (_isGuestMode) {
+      _syncStatus = SyncStatus.localOnly;
+      notifyListeners();
+      await _storageService.saveGuestEntry(entry);
+      return;
+    }
     _syncStatus = SyncStatus.syncing;
     notifyListeners();
     try {
@@ -207,6 +234,12 @@ class LifeEntryProvider extends ChangeNotifier {
 
   Future<void> deleteEntry(LifeEntry entry) async {
     _entries.removeWhere((currentEntry) => currentEntry.id == entry.id);
+    if (_isGuestMode) {
+      _syncStatus = SyncStatus.localOnly;
+      notifyListeners();
+      await _storageService.deleteGuestEntry(entry);
+      return;
+    }
     _syncStatus = SyncStatus.localCache;
     await _storageService
         .deleteEntry(entry)
@@ -218,6 +251,13 @@ class LifeEntryProvider extends ChangeNotifier {
     _entries.clear();
     await _storageService.deleteCloudEntries();
     _syncStatus = SyncStatus.synced;
+    notifyListeners();
+  }
+
+  Future<void> clearGuestEntries() async {
+    _entries.clear();
+    _syncStatus = SyncStatus.localOnly;
+    await _storageService.clearGuestEntries();
     notifyListeners();
   }
 

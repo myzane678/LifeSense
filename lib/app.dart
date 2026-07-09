@@ -77,7 +77,13 @@ class _AuthGateState extends State<_AuthGate> {
     ProfileProvider profileProvider,
   ) async {
     await authService.initialize();
-    if (!mounted || !authService.isSignedIn) return;
+    if (!mounted) return;
+    if (authService.isGuestMode) {
+      entryProvider.setGuestMode(true);
+      await entryProvider.loadGuestEntries();
+      return;
+    }
+    if (!authService.isSignedIn) return;
     await entryProvider.loadEntries();
     await profileProvider.loadCloudProfile();
   }

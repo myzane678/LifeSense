@@ -8,36 +8,47 @@
 - **Life Score** — 本地规则引擎自动评分，生成状态标签与改善建议
 - **历史记录** — 浏览、查看详情、删除单条记录
 - **7 天趋势图** — 可视化近一周各维度变化，连续打卡天数统计
-- **云同步** — 华为 AGConnect CloudDB，多端数据一致，卸载重装自动恢复
-- **头像 & 昵称** — AGConnect Cloud Storage + CloudDB 云同步
+- **访客模式** — 无需账号，数据存本机，即装即用
+- **云同步** — 注册账号后自动同步，多端一致，卸载重装可恢复
+- **头像 & 昵称** — 个人资料云同步
 
 ## 技术栈
 
 Flutter 3 · Dart · 华为 AGConnect (Auth / CloudDB / Cloud Storage) · Material 3
 
-## 下载
+---
 
-前往 [Releases](https://github.com/myzane678/LifeSense/releases) 下载最新 APK。
+## 普通用户：直接下载安装
 
-> 需要华为 AGConnect 配置文件（`agconnect-services.json`）才能使用云同步功能。自行部署时请在 AGC 控制台创建应用并下载配置文件放至 `android/app/` 及 `android/app/src/main/assets/`。
+前往 [Releases](https://github.com/myzane678/LifeSense/releases) 下载最新 APK，安装后即可使用。
 
-## 本地构建
+- **无需任何配置**，安装完直接打开
+- 支持**访客模式**：不注册账号，数据仅存本机，也能完整使用所有记录功能
+- 注册邮箱账号后，数据自动云同步，换机或重装后可恢复
+
+---
+
+## 开发者：本地构建
+
+本项目云同步基于华为 AGConnect。自行构建时需完成以下步骤：
+
+1. 在 [AGConnect 控制台](https://developer.huawei.com/consumer/cn/service/josp/agc/index.html) 创建 Android 应用（包名 `com.example.life_sense`）
+2. 开通 Auth、CloudDB、Cloud Storage 三项服务
+3. 下载 `agconnect-services.json`，放至以下两处：
+   - `android/app/agconnect-services.json`
+   - `android/app/src/main/assets/agconnect-services.json`
+4. 在 CloudDB 创建 zone `lifeSense`，导入 object type（见 `packages/agconnect_clouddb/android/.../objecttypes/`）
 
 ```bash
-# 依赖
 flutter pub get
-
-# 放置 agconnect-services.json（见上方说明）
-
-# 调试
 flutter run
-
-# Release APK
 flutter build apk --release
 ```
+
+---
 
 ## Changelog
 
 ### v1.0.0 (2026-07-09)
 
-首个正式发布版本，包含完整打卡、评分、历史记录和 AGConnect 云同步功能。
+首个正式发布版本，包含完整打卡、评分、历史记录、访客模式和 AGConnect 云同步功能。

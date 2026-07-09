@@ -37,17 +37,18 @@ class SettingsScreen extends StatelessWidget {
     );
     controller.dispose();
     if (nickname == null || !context.mounted) return;
+    final isGuest = context.read<LifeEntryProvider>().isGuestMode;
     try {
       await profile.setNickname(nickname);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('昵称已保存并同步')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(isGuest ? '昵称已保存在本机' : '昵称已保存并同步')),
+      );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('昵称已保存在本机，云同步稍后再试')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('昵称已保存在本机，云同步稍后再试')),
+      );
     }
   }
 
@@ -123,26 +124,24 @@ class SettingsScreen extends StatelessWidget {
       );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('云端检查失败，已保留本机缓存')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('云端检查失败，已保留本机缓存')),
+      );
     }
   }
 
   Future<void> restoreFromCloud(BuildContext context) async {
     try {
-      final restored = await context
-          .read<LifeEntryProvider>()
-          .restoreFromCloud();
+      final restored = await context.read<LifeEntryProvider>().restoreFromCloud();
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(restored ? '已从云端恢复历史记录' : '云端暂无可恢复记录')),
       );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('云端恢复失败，请稍后再试')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('云端恢复失败，请稍后再试')),
+      );
     }
   }
 
@@ -175,16 +174,70 @@ class SettingsScreen extends StatelessWidget {
     Navigator.popUntil(context, (route) => route.isFirst);
   }
 
+  Future<void> exitGuestMode(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('退出访客模式'),
+        content: const Text('退出后将回到登录页。本机记录不会被删除，但注册账号后无法自动迁移。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await context.read<AuthService>().exitGuestMode();
+    if (!context.mounted) return;
+    context.read<LifeEntryProvider>().setGuestMode(false);
+    Navigator.popUntil(context, (route) => route.isFirst);
+  }
+
+  Future<void> _clearGuestEntries(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空本机记录'),
+        content: const Text('将删除所有访客记录，且无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await context.read<LifeEntryProvider>().clearGuestEntries();
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('本机访客记录已清空')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final email = context.read<AuthService>().currentUser?.email ?? '';
     final provider = context.watch<LifeEntryProvider>();
     final profile = context.watch<ProfileProvider>();
+    final isGuest = provider.isGuestMode;
     final colorScheme = Theme.of(context).colorScheme;
+    final email = isGuest ? '' : (context.read<AuthService>().currentUser?.email ?? '');
     final syncText = switch (provider.syncStatus) {
       SyncStatus.synced => '已同步到云端',
       SyncStatus.localCache => '当前显示本机缓存',
       SyncStatus.syncing => '正在同步',
+      SyncStatus.localOnly => '访客模式 · 数据仅存本机',
     };
 
     return Scaffold(
@@ -194,11 +247,11 @@ class SettingsScreen extends StatelessWidget {
         children: [
           _ProfileCard(
             profile: profile,
+            isGuest: isGuest,
             onEditNickname: () => editNickname(context),
             onChooseAvatar: () => chooseAvatar(context),
           ),
           const SizedBox(height: 16),
-          // 账号信息卡
           Card(
             elevation: 0,
             color: colorScheme.primaryContainer,
@@ -208,10 +261,7 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     backgroundColor: colorScheme.primary,
-                    child: Icon(
-                      Icons.person_outline,
-                      color: colorScheme.onPrimary,
-                    ),
+                    child: Icon(Icons.person_outline, color: colorScheme.onPrimary),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -219,16 +269,14 @@ class SettingsScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          email,
+                          isGuest ? '访客' : email,
                           style: Theme.of(context).textTheme.bodyLarge,
                         ),
                         Text(
                           syncText,
                           style: TextStyle(
                             fontSize: 12,
-                            color: colorScheme.onPrimaryContainer.withAlpha(
-                              180,
-                            ),
+                            color: colorScheme.onPrimaryContainer.withAlpha(180),
                           ),
                         ),
                       ],
@@ -240,59 +288,107 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // 数据管理
-          _SectionLabel('数据管理'),
-          Card(
-            elevation: 0,
-            color: colorScheme.surfaceContainerLow,
-            child: Column(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.phone_android_outlined),
-                  title: const Text('清空本机缓存'),
-                  subtitle: const Text('确认云端可恢复后再清除此手机缓存'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => clearLocalCache(context),
+          if (isGuest) ...[
+            Card(
+              elevation: 0,
+              color: colorScheme.secondaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.cloud_upload_outlined, color: colorScheme.secondary),
+                        const SizedBox(width: 8),
+                        Text('开启云同步', style: Theme.of(context).textTheme.titleSmall),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '注册账号后，记录自动同步到云端，换机或重装后随时恢复。',
+                      style: TextStyle(color: colorScheme.onSecondaryContainer),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () => exitGuestMode(context),
+                      child: const Text('注册 / 登录账号'),
+                    ),
+                  ],
                 ),
-                const Divider(indent: 56, height: 0),
-                ListTile(
-                  leading: const Icon(Icons.cloud_download_outlined),
-                  title: const Text('从云端恢复历史记录'),
-                  subtitle: const Text('重新读取当前账号的云端记录'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => restoreFromCloud(context),
-                ),
-                const Divider(indent: 56, height: 0),
-                ListTile(
-                  leading: Icon(
-                    Icons.cloud_off_outlined,
-                    color: colorScheme.error,
-                  ),
-                  title: Text(
-                    '删除云端历史记录',
-                    style: TextStyle(color: colorScheme.error),
-                  ),
-                  subtitle: const Text('删除当前账号云端和本机记录'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => deleteCloudEntries(context),
-                ),
-              ],
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-
-          // 账号操作
-          _SectionLabel('账号'),
-          Card(
-            elevation: 0,
-            color: colorScheme.surfaceContainerLow,
-            child: ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('退出登录'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => signOut(context),
+            const SizedBox(height: 16),
+            _SectionLabel('数据管理'),
+            Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              child: ListTile(
+                leading: Icon(Icons.delete_outline, color: colorScheme.error),
+                title: Text('清空本机记录', style: TextStyle(color: colorScheme.error)),
+                subtitle: const Text('删除本机全部访客记录，不可恢复'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _clearGuestEntries(context),
+              ),
             ),
-          ),
+            const SizedBox(height: 16),
+            _SectionLabel('账号'),
+            Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              child: ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('退出访客模式'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => exitGuestMode(context),
+              ),
+            ),
+          ] else ...[
+            _SectionLabel('数据管理'),
+            Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.phone_android_outlined),
+                    title: const Text('清空本机缓存'),
+                    subtitle: const Text('确认云端可恢复后再清除此手机缓存'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => clearLocalCache(context),
+                  ),
+                  const Divider(indent: 56, height: 0),
+                  ListTile(
+                    leading: const Icon(Icons.cloud_download_outlined),
+                    title: const Text('从云端恢复历史记录'),
+                    subtitle: const Text('重新读取当前账号的云端记录'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => restoreFromCloud(context),
+                  ),
+                  const Divider(indent: 56, height: 0),
+                  ListTile(
+                    leading: Icon(Icons.cloud_off_outlined, color: colorScheme.error),
+                    title: Text('删除云端历史记录', style: TextStyle(color: colorScheme.error)),
+                    subtitle: const Text('删除当前账号云端和本机记录'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => deleteCloudEntries(context),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _SectionLabel('账号'),
+            Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              child: ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('退出登录'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => signOut(context),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -302,15 +398,18 @@ class SettingsScreen extends StatelessWidget {
 class _ProfileCard extends StatelessWidget {
   const _ProfileCard({
     required this.profile,
+    required this.isGuest,
     required this.onEditNickname,
     required this.onChooseAvatar,
   });
 
   final ProfileProvider profile;
+  final bool isGuest;
   final VoidCallback onEditNickname;
   final VoidCallback onChooseAvatar;
 
   String _profileSubtitle() {
+    if (isGuest) return '访客模式，头像和昵称仅存本机';
     final hasNickname = profile.hasNickname;
     final hasAvatar = profile.avatarPath != null;
     if (hasNickname && hasAvatar) return '头像和昵称已同步云端';
@@ -335,14 +434,9 @@ class _ProfileCard extends StatelessWidget {
               child: CircleAvatar(
                 radius: 32,
                 backgroundColor: colorScheme.primaryContainer,
-                backgroundImage: avatarPath == null
-                    ? null
-                    : FileImage(File(avatarPath)),
+                backgroundImage: avatarPath == null ? null : FileImage(File(avatarPath)),
                 child: avatarPath == null
-                    ? Icon(
-                        Icons.add_a_photo_outlined,
-                        color: colorScheme.primary,
-                      )
+                    ? Icon(Icons.add_a_photo_outlined, color: colorScheme.primary)
                     : null,
               ),
             ),

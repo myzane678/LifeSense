@@ -8,21 +8,30 @@ class AuthService extends ChangeNotifier {
   AuthService();
 
   static const _loginTimeKey = 'last_login_ms';
+  static const _guestModeKey = 'is_guest_mode';
   static const _sessionDays = 7;
 
   AGCUser? _currentUser;
   bool _isInitialized = false;
+  bool _isGuestMode = false;
 
   AGCUser? get currentUser => _currentUser;
   bool get isInitialized => _isInitialized;
-  bool get isSignedIn => _currentUser != null;
+  bool get isSignedIn => _currentUser != null || _isGuestMode;
+  bool get isGuestMode => _isGuestMode;
 
   Future<void> initialize() async {
-    _currentUser = await AGCAuth.instance.currentUser;
-    if (_currentUser != null && !await isSessionValid()) {
-      await AGCAuth.instance.signOut();
-      _currentUser = null;
+    final prefs = await SharedPreferences.getInstance();
+    _isGuestMode = prefs.getBool(_guestModeKey) ?? false;
+
+    if (!_isGuestMode) {
+      _currentUser = await AGCAuth.instance.currentUser;
+      if (_currentUser != null && !await isSessionValid()) {
+        await AGCAuth.instance.signOut();
+        _currentUser = null;
+      }
     }
+
     _isInitialized = true;
     notifyListeners();
   }
@@ -111,6 +120,20 @@ class AuthService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_loginTimeKey);
     _currentUser = null;
+    notifyListeners();
+  }
+
+  Future<void> continueAsGuest() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_guestModeKey, true);
+    _isGuestMode = true;
+    notifyListeners();
+  }
+
+  Future<void> exitGuestMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_guestModeKey);
+    _isGuestMode = false;
     notifyListeners();
   }
 

@@ -85,6 +85,11 @@ class _SyncStatusCard extends StatelessWidget {
         '正在同步',
         colorScheme.secondary,
       ),
+      SyncStatus.localOnly => (
+        Icons.person_outline,
+        '访客模式 · 数据仅存本机',
+        colorScheme.secondary,
+      ),
     };
 
     return Card(
