@@ -20,6 +20,8 @@ Flutter 3 · Dart · 华为 AGConnect (Auth / CloudDB / Cloud Storage) · Materi
 
 ## 普通用户：直接下载安装
 
+> **本应用为 Android 手机应用**，需要 Android 手机安装使用。
+
 前往 [Releases](https://github.com/myzane678/LifeSense/releases) 下载最新 APK，安装后即可使用。
 
 - **无需任何配置**，安装完直接打开
