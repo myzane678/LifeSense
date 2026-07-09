@@ -1,0 +1,49 @@
+group 'com.huawei.agconnect.cloudstorage'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://developer.huawei.com/repo/" }
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.12.1'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://developer.huawei.com/repo/" }
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    compileSdkVersion 36
+    buildToolsVersion "29.0.3"
+    namespace 'com.huawei.agconnect.cloudstorage'
+
+    defaultConfig {
+        minSdkVersion 19
+        targetSdkVersion 29
+    }
+
+    lintOptions{
+        disable 'InvalidPackage'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+}
+
+dependencies {
+    implementation "com.huawei.agconnect:agconnect-storage:1.9.1.300"
+}

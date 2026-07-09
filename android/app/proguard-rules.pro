@@ -1,0 +1,4 @@
+-keep class com.huawei.agconnect.** { *; }
+-keep class com.huawei.hmf.** { *; }
+-keep class com.huawei.secure.** { *; }
+-keepattributes Signature,*Annotation*,InnerClasses,EnclosingMethod
