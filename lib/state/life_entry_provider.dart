@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/life_entry.dart';
+import '../models/weekly_report.dart';
 import '../services/life_score_service.dart';
 import '../services/life_storage_service.dart';
 
@@ -88,6 +89,26 @@ class LifeEntryProvider extends ChangeNotifier {
     return null;
   }
 
+  List<WeeklyReport> get weeklyReports {
+    if (_entries.isEmpty) return [];
+
+    // 按 ISO 周分组：周一为起点
+    final grouped = <DateTime, List<LifeEntry>>{};
+    for (final entry in _entries) {
+      final d = entry.createdAt;
+      final monday = DateTime(d.year, d.month, d.day)
+          .subtract(Duration(days: d.weekday - 1));
+      grouped.putIfAbsent(monday, () => []).add(entry);
+    }
+
+    final reports = grouped.entries
+        .map((e) => WeeklyReport.fromEntries(e.value, e.key))
+        .toList()
+      ..sort((a, b) => b.startDate.compareTo(a.startDate));
+
+    return reports;
+  }
+
   Future<void> loadGuestEntries() async {
     _isLoading = true;
     notifyListeners();
@@ -124,6 +145,134 @@ class LifeEntryProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  Future<void> recalculateAllEntries() async {
+    if (_entries.isEmpty) return;
+    final recalculated = _entries.map((e) {
+      final score = _scoreService.calculateScore(
+        mood: e.mood,
+        energy: e.energy,
+        stress: e.stress,
+        focus: e.focus,
+        sleepHours: e.sleepHours,
+        waterCups: e.waterCups,
+      );
+      return LifeEntry(
+        id: e.id,
+        createdAt: e.createdAt,
+        mood: e.mood,
+        energy: e.energy,
+        stress: e.stress,
+        focus: e.focus,
+        sleepHours: e.sleepHours,
+        waterCups: e.waterCups,
+        activity: e.activity,
+        note: e.note,
+        score: score,
+        status: _scoreService.statusFor(
+          score: score,
+          energy: e.energy,
+          stress: e.stress,
+          sleepHours: e.sleepHours,
+        ),
+        suggestion: _scoreService.suggestionFor(
+          mood: e.mood,
+          energy: e.energy,
+          stress: e.stress,
+          focus: e.focus,
+          sleepHours: e.sleepHours,
+          waterCups: e.waterCups,
+          score: score,
+        ),
+      );
+    }).toList();
+
+    _entries
+      ..clear()
+      ..addAll(recalculated);
+
+    if (_isGuestMode) {
+      _syncStatus = SyncStatus.localOnly;
+      notifyListeners();
+      await _storageService.saveGuestEntries(recalculated);
+      return;
+    }
+    _syncStatus = SyncStatus.syncing;
+    notifyListeners();
+    try {
+      await _storageService
+          .saveEntries(recalculated)
+          .timeout(const Duration(seconds: 15));
+      _syncStatus = SyncStatus.synced;
+    } catch (_) {
+      _syncStatus = SyncStatus.localCache;
+    }
+    notifyListeners();
+  }
+
+  // 返回 (旧分数, 旧状态, 新分数, 新状态) 供 UI 展示对比
+  Future<(int, String, int, String)> updateEntry(LifeEntry entry) async {
+    final oldEntry = _entries.firstWhere((e) => e.id == entry.id,
+        orElse: () => entry);
+    final oldScore = oldEntry.score;
+    final oldStatus = oldEntry.status;
+    final score = _scoreService.calculateScore(
+      mood: entry.mood,
+      energy: entry.energy,
+      stress: entry.stress,
+      focus: entry.focus,
+      sleepHours: entry.sleepHours,
+      waterCups: entry.waterCups,
+    );
+    final updated = LifeEntry(
+      id: entry.id,
+      createdAt: entry.createdAt,
+      mood: entry.mood,
+      energy: entry.energy,
+      stress: entry.stress,
+      focus: entry.focus,
+      sleepHours: entry.sleepHours,
+      waterCups: entry.waterCups,
+      activity: entry.activity,
+      note: entry.note,
+      score: score,
+      status: _scoreService.statusFor(
+        score: score,
+        energy: entry.energy,
+        stress: entry.stress,
+        sleepHours: entry.sleepHours,
+      ),
+      suggestion: _scoreService.suggestionFor(
+        mood: entry.mood,
+        energy: entry.energy,
+        stress: entry.stress,
+        focus: entry.focus,
+        sleepHours: entry.sleepHours,
+        waterCups: entry.waterCups,
+        score: score,
+      ),
+    );
+
+    final idx = _entries.indexWhere((e) => e.id == updated.id);
+    if (idx != -1) _entries[idx] = updated;
+
+    if (_isGuestMode) {
+      _syncStatus = SyncStatus.localOnly;
+      notifyListeners();
+      await _storageService.saveGuestEntry(updated);
+      return (oldScore, oldStatus, score, updated.status);
+    }
+    _syncStatus = SyncStatus.syncing;
+    notifyListeners();
+    try {
+      await _storageService.saveEntry(updated).timeout(const Duration(seconds: 8));
+      _syncStatus = SyncStatus.synced;
+    } catch (_) {
+      _syncStatus = SyncStatus.localCache;
+    }
+    notifyListeners();
+    return (oldScore, oldStatus, score, updated.status);
   }
 
   Future<void> addEntry({

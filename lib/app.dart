@@ -5,9 +5,12 @@ import 'models/life_entry.dart';
 import 'screens/check_in_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/entry_detail_screen.dart';
+import 'screens/daily_digest_screen.dart';
+import 'screens/edit_entry_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/weekly_report_screen.dart';
 import 'services/auth_service.dart';
 import 'state/life_entry_provider.dart';
 import 'state/profile_provider.dart';
@@ -31,17 +34,39 @@ class LifeSenseApp extends StatelessWidget {
           ),
         ),
       ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2563EB),
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+        cardTheme: const CardThemeData(
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(24)),
+          ),
+        ),
+      ),
+      themeMode: ThemeMode.system,
       routes: {
         '/': (_) => const _AuthGate(),
         '/check-in': (_) => const CheckInScreen(),
         '/history': (_) => const HistoryScreen(),
         '/settings': (_) => const SettingsScreen(),
+        '/weekly-report': (_) => const WeeklyReportScreen(),
+        '/digest': (_) => const DailyDigestScreen(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/detail') {
           return MaterialPageRoute<void>(
             builder: (_) =>
                 EntryDetailScreen(entry: settings.arguments as LifeEntry),
+          );
+        }
+        if (settings.name == '/edit') {
+          return MaterialPageRoute<bool>(
+            builder: (_) =>
+                EditEntryScreen(entry: settings.arguments as LifeEntry),
           );
         }
         return null;

@@ -97,6 +97,39 @@ class SettingsScreen extends StatelessWidget {
     } catch (_) {}
   }
 
+  Future<void> recalculateEntries(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('重新计算历史分数'),
+        content: const Text('将按最新算法重新计算所有历史记录的分数、状态和建议，并同步保存。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await context.read<LifeEntryProvider>().recalculateAllEntries();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('历史分数已重新计算并保存')),
+      );
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('重新计算失败，请稍后再试')),
+      );
+    }
+  }
+
   Future<void> clearLocalCache(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -331,6 +364,18 @@ class SettingsScreen extends StatelessWidget {
                 onTap: () => _clearGuestEntries(context),
               ),
             ),
+            const SizedBox(height: 8),
+            Card(
+              elevation: 0,
+              color: colorScheme.surfaceContainerLow,
+              child: ListTile(
+                leading: const Icon(Icons.calculate_outlined),
+                title: const Text('重新计算历史分数'),
+                subtitle: const Text('按最新算法更新所有记录的分数和建议'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => recalculateEntries(context),
+              ),
+            ),
             const SizedBox(height: 16),
             _SectionLabel('账号'),
             Card(
@@ -372,6 +417,14 @@ class SettingsScreen extends StatelessWidget {
                     subtitle: const Text('删除当前账号云端和本机记录'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => deleteCloudEntries(context),
+                  ),
+                  const Divider(indent: 56, height: 0),
+                  ListTile(
+                    leading: const Icon(Icons.calculate_outlined),
+                    title: const Text('重新计算历史分数'),
+                    subtitle: const Text('按最新算法更新所有记录的分数和建议'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => recalculateEntries(context),
                   ),
                 ],
               ),

@@ -154,6 +154,9 @@ class LifeStorageService {
     );
   }
 
+  Future<void> saveGuestEntries(List<LifeEntry> entries) =>
+      _saveGuestEntries(entries);
+
   Future<void> clearGuestEntries() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_guestCacheKey);

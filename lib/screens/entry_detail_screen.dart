@@ -15,7 +15,24 @@ class EntryDetailScreen extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: Text(DateFormat('M月d日').format(entry.createdAt))),
+      appBar: AppBar(
+        title: Text(DateFormat('M月d日').format(entry.createdAt)),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            onPressed: () async {
+              final updated = await Navigator.pushNamed<bool>(
+                context,
+                '/edit',
+                arguments: entry,
+              );
+              if (updated == true && context.mounted) {
+                Navigator.pop(context);
+              }
+            },
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [

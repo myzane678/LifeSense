@@ -5,8 +5,27 @@ import 'package:provider/provider.dart';
 import '../models/life_entry.dart';
 import '../state/life_entry_provider.dart';
 
-class HistoryScreen extends StatelessWidget {
+enum _ScoreFilter { all, high, mid, low }
+
+class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
+
+  @override
+  State<HistoryScreen> createState() => _HistoryScreenState();
+}
+
+class _HistoryScreenState extends State<HistoryScreen> {
+  _ScoreFilter _filter = _ScoreFilter.all;
+
+  List<LifeEntry> _applyFilter(List<LifeEntry> entries) {
+    return switch (_filter) {
+      _ScoreFilter.all => entries,
+      _ScoreFilter.high => entries.where((e) => e.score >= 80).toList(),
+      _ScoreFilter.mid =>
+        entries.where((e) => e.score >= 60 && e.score < 80).toList(),
+      _ScoreFilter.low => entries.where((e) => e.score < 60).toList(),
+    };
+  }
 
   Future<void> _confirmDelete(BuildContext context, LifeEntry entry) async {
     final confirmed = await showDialog<bool>(
@@ -31,36 +50,86 @@ class HistoryScreen extends StatelessWidget {
     try {
       await context.read<LifeEntryProvider>().deleteEntry(entry);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('已删除本机缓存记录')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('已删除本机缓存记录')));
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('删除失败，请稍后再试')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('删除失败，请稍后再试')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final entries = context.watch<LifeEntryProvider>().entries;
+    final all = context.watch<LifeEntryProvider>().entries;
+    final filtered = _applyFilter(List<LifeEntry>.from(all));
+
     return Scaffold(
       appBar: AppBar(title: const Text('历史记录')),
-      body: entries.isEmpty
-          ? const Center(child: Text('还没有历史记录'))
-          : ListView.separated(
-              padding: const EdgeInsets.all(20),
-              itemCount: entries.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final entry = entries[index];
-                return _HistoryCard(
-                  entry: entry,
-                  onDelete: () => _confirmDelete(context, entry),
-                );
-              },
+      body: Column(
+        children: [
+          _FilterBar(
+            current: _filter,
+            onChanged: (f) => setState(() => _filter = f),
+          ),
+          Expanded(
+            child: filtered.isEmpty
+                ? Center(
+                    child: Text(
+                      all.isEmpty ? '还没有历史记录' : '该分段暂无记录',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final entry = filtered[index];
+                      return _HistoryCard(
+                        entry: entry,
+                        onDelete: () => _confirmDelete(context, entry),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FilterBar extends StatelessWidget {
+  const _FilterBar({required this.current, required this.onChanged});
+
+  final _ScoreFilter current;
+  final ValueChanged<_ScoreFilter> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    const items = [
+      (_ScoreFilter.all, '全部'),
+      (_ScoreFilter.high, '优秀 ≥80'),
+      (_ScoreFilter.mid, '良好 60-79'),
+      (_ScoreFilter.low, '待提升 <60'),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Row(
+        children: [
+          for (final (filter, label) in items) ...[
+            FilterChip(
+              label: Text(label),
+              selected: current == filter,
+              onSelected: (_) => onChanged(filter),
             ),
+            const SizedBox(width: 8),
+          ],
+        ],
+      ),
     );
   }
 }
