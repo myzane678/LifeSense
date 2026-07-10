@@ -5,8 +5,11 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
+import '../services/digest_preferences_service.dart';
+import '../services/reminder_service.dart';
 import '../state/life_entry_provider.dart';
 import '../state/profile_provider.dart';
+import '../widgets/digest_interest_dialog.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -95,6 +98,49 @@ class SettingsScreen extends StatelessWidget {
         );
       }
     } catch (_) {}
+  }
+
+  Future<void> editDigestInterests(BuildContext context) async {
+    final preferences = context.read<DigestPreferencesService>();
+    final selected = await showDigestInterestDialog(
+      context,
+      initialIds: preferences.selectedIds,
+      title: '兴趣方向',
+      description: '选择 1-3 个方向，用于个性化每日速览内容。',
+    );
+    if (selected == null || !context.mounted) return;
+    await preferences.setSelectedIds(selected);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('兴趣方向已更新')),
+    );
+  }
+
+  Future<void> toggleReminder(BuildContext context, bool enabled) async {
+    final reminder = context.read<ReminderService>();
+    if (!enabled) {
+      await reminder.disableDailyReminder();
+      return;
+    }
+    final granted = await reminder.enableDailyReminder();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(granted ? '每日提醒已开启' : '未获得通知权限，可稍后在系统设置中开启')),
+    );
+  }
+
+  Future<void> chooseReminderTime(BuildContext context) async {
+    final reminder = context.read<ReminderService>();
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: reminder.reminderTime,
+    );
+    if (picked == null || !context.mounted) return;
+    await reminder.setReminderTime(picked);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('提醒时间已更新')),
+    );
   }
 
   Future<void> recalculateEntries(BuildContext context) async {
@@ -263,6 +309,8 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<LifeEntryProvider>();
     final profile = context.watch<ProfileProvider>();
+    final reminder = context.watch<ReminderService>();
+    final digestPreferences = context.watch<DigestPreferencesService>();
     final isGuest = provider.isGuestMode;
     final colorScheme = Theme.of(context).colorScheme;
     final email = isGuest ? '' : (context.read<AuthService>().currentUser?.email ?? '');
@@ -318,6 +366,26 @@ class SettingsScreen extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 16),
+          _SectionLabel('每日速览'),
+          Card(
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            child: ListTile(
+              leading: const Icon(Icons.tune_outlined),
+              title: const Text('兴趣方向'),
+              subtitle: Text(digestPreferences.selectedLabelText),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => editDigestInterests(context),
+            ),
+          ),
+          const SizedBox(height: 16),
+          _SectionLabel('日常提醒'),
+          _ReminderCard(
+            reminder: reminder,
+            onToggle: (enabled) => toggleReminder(context, enabled),
+            onChooseTime: () => chooseReminderTime(context),
           ),
           const SizedBox(height: 16),
 
@@ -440,6 +508,48 @@ class SettingsScreen extends StatelessWidget {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => signOut(context),
               ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReminderCard extends StatelessWidget {
+  const _ReminderCard({
+    required this.reminder,
+    required this.onToggle,
+    required this.onChooseTime,
+  });
+
+  final ReminderService reminder;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback onChooseTime;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      color: colorScheme.surfaceContainerLow,
+      child: Column(
+        children: [
+          SwitchListTile(
+            secondary: const Icon(Icons.notifications_active_outlined),
+            title: const Text('每日记录提醒'),
+            subtitle: Text(reminder.enabled ? '每天 ${reminder.reminderTimeText} 提醒' : '已关闭'),
+            value: reminder.enabled,
+            onChanged: reminder.isInitialized ? onToggle : null,
+          ),
+          if (reminder.enabled) ...[
+            const Divider(indent: 56, height: 0),
+            ListTile(
+              leading: const Icon(Icons.schedule_outlined),
+              title: const Text('提醒时间'),
+              subtitle: Text(reminder.reminderTimeText),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: onChooseTime,
             ),
           ],
         ],

@@ -66,7 +66,7 @@ class _EditEntryScreenState extends State<EditEntryScreen> {
     setState(() => isSaving = true);
     final updated = LifeEntry(
       id: widget.entry.id,
-      createdAt: widget.entry.createdAt,
+      createdAt: DateTime.now(),
       mood: mood,
       energy: energy,
       stress: stress,

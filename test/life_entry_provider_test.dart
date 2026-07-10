@@ -11,6 +11,24 @@ class _FakeStorage extends LifeStorageService {
   Future<List<LifeEntry>> loadEntries() async => _entries;
 }
 
+LifeEntry _entry(String id, DateTime createdAt, {int score = 80}) {
+  return LifeEntry(
+    id: id,
+    createdAt: createdAt,
+    mood: 4,
+    energy: 4,
+    stress: 2,
+    focus: 4,
+    sleepHours: 7,
+    waterCups: 6,
+    activity: '学习',
+    note: '',
+    score: score,
+    status: '状态良好',
+    suggestion: '保持节奏',
+  );
+}
+
 void main() {
   test('最近 7 天记录会按日期保留每天最新一条', () async {
     final now = DateTime.now();
@@ -91,5 +109,49 @@ void main() {
     expect(recentEntries.whereType<Object>().length, 2);
     expect(recentEntries.last?.id, 'today-new');
     expect(recentEntries[5]?.id, 'yesterday');
+  });
+
+  test('连续记录天数会从今天往前计算', () async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, 12);
+    final provider = LifeEntryProvider(
+      storageService: _FakeStorage([
+        _entry('today', today),
+        _entry('yesterday', today.subtract(const Duration(days: 1))),
+        _entry('two-days-ago', today.subtract(const Duration(days: 2))),
+      ]),
+    );
+    await provider.loadEntries();
+
+    expect(provider.consecutiveRecordDays, 3);
+  });
+
+  test('缺少今天记录时连续天数为 0', () async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, 12);
+    final provider = LifeEntryProvider(
+      storageService: _FakeStorage([
+        _entry('yesterday', today.subtract(const Duration(days: 1))),
+        _entry('two-days-ago', today.subtract(const Duration(days: 2))),
+      ]),
+    );
+    await provider.loadEntries();
+
+    expect(provider.consecutiveRecordDays, 0);
+  });
+
+  test('同一天多条记录不会重复增加连续天数', () async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day, 12);
+    final provider = LifeEntryProvider(
+      storageService: _FakeStorage([
+        _entry('today-new', today),
+        _entry('today-old', today.subtract(const Duration(hours: 1))),
+        _entry('yesterday', today.subtract(const Duration(days: 1))),
+      ]),
+    );
+    await provider.loadEntries();
+
+    expect(provider.consecutiveRecordDays, 2);
   });
 }

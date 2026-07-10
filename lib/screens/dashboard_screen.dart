@@ -3,16 +3,103 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/life_entry.dart';
+import '../services/digest_preferences_service.dart';
+import '../services/reminder_service.dart';
 import '../state/life_entry_provider.dart';
 import '../widgets/metric_tile.dart';
+import '../widgets/digest_interest_dialog.dart';
 import '../widgets/score_card.dart';
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showFirstUsePrompts());
+  }
+
+  Future<void> _showFirstUsePrompts() async {
+    final handledReminder = await _showReminderPrompt();
+    if (handledReminder || !mounted) return;
+    await _showDigestInterestPrompt();
+  }
+
+  Future<bool> _showReminderPrompt() async {
+    if (!mounted) return false;
+    final reminder = context.read<ReminderService>();
+    if (!reminder.isInitialized || reminder.promptSeen) return false;
+
+    final enable = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('开启每日提醒？'),
+        content: Text(
+          '每天 ${reminder.reminderTimeText} 提醒你记录今日状态，帮助保持连续追踪。之后可在设置中调整时间。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('暂不开启'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('开启提醒'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || enable == null) return false;
+    await reminder.markPromptSeen();
+    if (!enable) return true;
+    await _chooseTimeAndEnableReminder(reminder);
+    return true;
+  }
+
+  Future<void> _showDigestInterestPrompt() async {
+    if (!mounted) return;
+    final preferences = context.read<DigestPreferencesService>();
+    if (!preferences.isInitialized || preferences.promptSeen) return;
+
+    final selected = await showDigestInterestDialog(
+      context,
+      initialIds: preferences.selectedIds,
+      title: '选择你关心的内容',
+      description: '每日速览会优先展示这些方向。先选 1-3 个，之后可在设置里修改。',
+    );
+    if (!mounted) return;
+    await preferences.markPromptSeen();
+    if (selected == null) return;
+    await preferences.setSelectedIds(selected);
+  }
+
+  Future<void> _enableReminderFromStrip(ReminderService reminder) async {
+    await _chooseTimeAndEnableReminder(reminder);
+  }
+
+  Future<void> _chooseTimeAndEnableReminder(ReminderService reminder) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: reminder.reminderTime,
+    );
+    if (picked == null || !mounted) return;
+    await reminder.setReminderTime(picked);
+    final granted = await reminder.enableDailyReminder();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(granted ? '每日提醒已开启' : '未获得通知权限，可稍后在设置中开启')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<LifeEntryProvider>();
+    final reminder = context.watch<ReminderService>();
     final entry = provider.todayEntry;
     final now = DateTime.now();
     final days = ['一', '二', '三', '四', '五', '六', '日'];
@@ -28,8 +115,8 @@ class DashboardScreen extends StatelessWidget {
             Text(
               '${DateFormat('M月d日').format(now)} · 周${days[now.weekday - 1]}',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -47,6 +134,14 @@ class DashboardScreen extends StatelessWidget {
               children: [
                 // 同步状态（紧凑）
                 _SyncStatusBar(status: provider.syncStatus),
+                const SizedBox(height: 8),
+                _MotivationLine(),
+                if (reminder.isInitialized && !reminder.enabled) ...[
+                  const SizedBox(height: 10),
+                  _ReminderPromptStrip(
+                    onEnable: () => _enableReminderFromStrip(reminder),
+                  ),
+                ],
                 const SizedBox(height: 12),
 
                 // 每日速览入口（顶部显眼位置）
@@ -95,6 +190,75 @@ class DashboardScreen extends StatelessWidget {
   }
 }
 
+class _MotivationLine extends StatelessWidget {
+  static const _quotes = [
+    '行胜于言。——鲁迅',
+    '生活明朗，万物可爱。——汪曾祺',
+    '种一棵树最好的时间是十年前，其次是现在。',
+    '凡是过往，皆为序章。——莎士比亚',
+    '保持热爱，奔赴山海。',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final now = DateTime.now();
+    final quote = _quotes[now.day % _quotes.length];
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.auto_awesome_outlined, size: 15, color: cs.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            quote,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: cs.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReminderPromptStrip extends StatelessWidget {
+  const _ReminderPromptStrip({required this.onEnable});
+
+  final VoidCallback onEnable;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outlineVariant.withAlpha(120)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.notifications_none_outlined, size: 18, color: cs.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '开启每日记录提醒，避免忘记打卡',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+            ),
+          ),
+          TextButton(onPressed: onEnable, child: const Text('开启')),
+        ],
+      ),
+    );
+  }
+}
+
 class _SyncStatusBar extends StatelessWidget {
   const _SyncStatusBar({required this.status});
 
@@ -102,21 +266,13 @@ class _SyncStatusBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (status == SyncStatus.synced || status == SyncStatus.localCache) {
+      return const SizedBox.shrink();
+    }
     final cs = Theme.of(context).colorScheme;
-    final (icon, text, color) = switch (status) {
-      SyncStatus.synced => (Icons.cloud_done_outlined, '已同步到云端', cs.primary),
-      SyncStatus.localCache => (
-          Icons.phone_android_outlined,
-          '当前显示本机缓存',
-          cs.tertiary
-        ),
-      SyncStatus.syncing => (Icons.sync_outlined, '正在同步', cs.secondary),
-      SyncStatus.localOnly => (
-          Icons.person_outline,
-          '访客模式 · 数据仅存本机',
-          cs.secondary
-        ),
-    };
+    final (icon, text, color) = status == SyncStatus.syncing
+        ? (Icons.sync_outlined, '正在同步', cs.secondary)
+        : (Icons.person_outline, '访客模式 · 数据仅存本机', cs.secondary);
     return Row(
       children: [
         Icon(icon, size: 14, color: color),
@@ -124,7 +280,10 @@ class _SyncStatusBar extends StatelessWidget {
         Text(
           text,
           style: TextStyle(
-              fontSize: 12, color: color, fontWeight: FontWeight.w500),
+            fontSize: 12,
+            color: color,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ],
     );
@@ -135,6 +294,11 @@ class _DigestBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final digestPreferences = context.watch<DigestPreferencesService>();
+    final digestSubtitle = digestPreferences.isInitialized &&
+            digestPreferences.selectedInterests.isNotEmpty
+        ? '${digestPreferences.selectedLabelText} · 学习工具箱'
+        : '前沿内容 · 学习工具箱';
     return Card(
       elevation: 0,
       color: cs.primaryContainer,
@@ -151,8 +315,11 @@ class _DigestBanner extends StatelessWidget {
                   color: cs.primary,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(Icons.newspaper_outlined,
-                    size: 20, color: cs.onPrimary),
+                child: Icon(
+                  Icons.newspaper_outlined,
+                  size: 20,
+                  color: cs.onPrimary,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -168,7 +335,7 @@ class _DigestBanner extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '科技要闻 · 专业动态 · 生活建议',
+                      digestSubtitle,
                       style: TextStyle(
                         color: cs.onPrimaryContainer.withAlpha(160),
                         fontSize: 12,
@@ -235,7 +402,10 @@ class _SuggestionCard extends StatelessWidget {
               child: Text(
                 suggestion,
                 style: TextStyle(
-                    color: cs.onSecondaryContainer, height: 1.5, fontSize: 13),
+                  color: cs.onSecondaryContainer,
+                  height: 1.5,
+                  fontSize: 13,
+                ),
               ),
             ),
           ],
@@ -263,29 +433,35 @@ class _MetricsGrid extends StatelessWidget {
         MetricTile(label: '心情', value: '${entry.mood}/5', icon: Icons.mood),
         MetricTile(label: '精力', value: '${entry.energy}/5', icon: Icons.bolt),
         MetricTile(
-            label: '压力',
-            value: '${entry.stress}/5',
-            icon: Icons.psychology_outlined),
+          label: '压力',
+          value: '${entry.stress}/5',
+          icon: Icons.psychology_outlined,
+        ),
         MetricTile(
-            label: '专注',
-            value: '${entry.focus}/5',
-            icon: Icons.center_focus_strong_outlined),
+          label: '专注',
+          value: '${entry.focus}/5',
+          icon: Icons.center_focus_strong_outlined,
+        ),
         MetricTile(
-            label: '睡眠',
-            value: '${entry.sleepHours}h',
-            icon: Icons.bedtime_outlined),
+          label: '睡眠',
+          value: '${entry.sleepHours}h',
+          icon: Icons.bedtime_outlined,
+        ),
         MetricTile(
-            label: '饮水',
-            value: '${entry.waterCups}杯',
-            icon: Icons.water_drop_outlined),
+          label: '饮水',
+          value: '${entry.waterCups}杯',
+          icon: Icons.water_drop_outlined,
+        ),
       ],
     );
   }
 }
 
 class _SevenDayTrendCard extends StatelessWidget {
-  const _SevenDayTrendCard(
-      {required this.entries, required this.consecutiveDays});
+  const _SevenDayTrendCard({
+    required this.entries,
+    required this.consecutiveDays,
+  });
 
   final List<LifeEntry?> entries;
   final int consecutiveDays;
@@ -303,31 +479,34 @@ class _SevenDayTrendCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Text('最近 7 天',
-                    style: Theme.of(context).textTheme.titleMedium),
+                Text('最近 7 天', style: Theme.of(context).textTheme.titleMedium),
                 const Spacer(),
                 if (consecutiveDays > 0) _StreakChip(days: consecutiveDays),
               ],
             ),
             const SizedBox(height: 12),
             if (recorded.isEmpty)
-              Text('最近 7 天暂无记录',
-                  style: TextStyle(color: cs.onSurfaceVariant))
+              Text('最近 7 天暂无记录', style: TextStyle(color: cs.onSurfaceVariant))
             else ...[
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   _TrendStat(
-                      label: '平均分',
-                      value: _averageScore(recorded).toString()),
+                    label: '平均分',
+                    value: _averageScore(recorded).toString(),
+                  ),
+                  _TrendStat(label: '记录天数', value: '${recorded.length} 天'),
                   _TrendStat(
-                      label: '记录天数', value: '${recorded.length} 天'),
-                  _TrendStat(
-                      label: '最高分',
-                      value: _highestScore(recorded).toString()),
+                    label: '最高分',
+                    value: _highestScore(recorded).toString(),
+                  ),
                 ],
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 12),
+              _TrendInsightLine(
+                text: _trendInsightText(recorded, consecutiveDays),
+              ),
+              const SizedBox(height: 14),
               _TrendBars(entries: entries),
             ],
           ],
@@ -345,7 +524,7 @@ class _TrendBars extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 112,
+      height: 118,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -384,15 +563,16 @@ class _TrendBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         onTap: entry == null
             ? null
-            : () =>
-                Navigator.pushNamed(context, '/detail', arguments: entry),
+            : () => Navigator.pushNamed(context, '/detail', arguments: entry),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 4),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Text(score?.toString() ?? '-',
-                  style: Theme.of(context).textTheme.labelSmall),
+              Text(
+                score?.toString() ?? '-',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
               const SizedBox(height: 6),
               AnimatedContainer(
                 duration: const Duration(milliseconds: 400),
@@ -441,10 +621,41 @@ class _StreakChip extends StatelessWidget {
           Text(
             '连续 $days 天',
             style: TextStyle(
-                color: cs.onPrimaryContainer, fontWeight: FontWeight.w600),
+              color: cs.onPrimaryContainer,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _TrendInsightLine extends StatelessWidget {
+  const _TrendInsightLine({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(Icons.insights_outlined, size: 16, color: cs.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: cs.onSurfaceVariant,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -519,14 +730,39 @@ class _ActionButton extends StatelessWidget {
             children: [
               Icon(icon, color: cs.primary),
               const SizedBox(height: 4),
-              Text(label,
-                  style: TextStyle(fontSize: 13, color: cs.onSurface)),
+              Text(label, style: TextStyle(fontSize: 13, color: cs.onSurface)),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+String _trendInsightText(List<LifeEntry> entries, int consecutiveDays) {
+  if (consecutiveDays >= 3) {
+    return '已连续记录 $consecutiveDays 天，节奏正在建立';
+  }
+  if (entries.length == 1) return '已开始记录，继续积累趋势';
+
+  final avgStress =
+      entries.fold<int>(0, (sum, e) => sum + e.stress) / entries.length;
+  if (avgStress >= 4) return '压力偏高，今天放慢一点';
+
+  final avgSleep =
+      entries.fold<double>(0, (sum, e) => sum + e.sleepHours) / entries.length;
+  if (avgSleep < 6) return '睡眠偏少，优先补休';
+
+  final middle = entries.length ~/ 2;
+  final earlier = entries.take(middle).toList();
+  final later = entries.skip(middle).toList();
+  final earlierAvg = _averageScore(earlier);
+  final laterAvg = _averageScore(later);
+  final diff = laterAvg - earlierAvg;
+
+  if (diff >= 3) return '状态较前几天上升，继续保持';
+  if (diff <= -3) return '状态较前几天回落，注意休息';
+  return '状态整体平稳';
 }
 
 int _averageScore(List<LifeEntry> entries) {

@@ -42,6 +42,7 @@ class LifeScoreService {
     required double sleepHours,
     required int waterCups,
     required int score,
+    DateTime? now,
   }) {
     // 压力 + 睡眠双重预警
     if (stress >= 4 && sleepHours < 6) {
@@ -94,9 +95,10 @@ class LifeScoreService {
     }
     // 饮水不足
     if (waterCups <= 3) {
+      final waterReminderText = _waterReminderText(now ?? DateTime.now());
       return '今天饮水偏少，轻度脱水即会影响注意力和情绪，建议：\n'
           '① 现在喝一杯 300 ml 的水\n'
-          '② 在手机设 2-3 个喝水提醒（10:00、14:00、17:00）\n'
+          '② $waterReminderText\n'
           '③ 桌上放一个 500 ml 水杯作为视觉提示，目标喝空 3 次';
     }
     // 专注差（单独）
@@ -124,6 +126,19 @@ class LifeScoreService {
         '① 今天选定 1-3 个明确目标，完成后打勾，建立成就感\n'
         '② 午休或下午喝一杯水并走动 5 分钟，防止状态下滑\n'
         '③ 晚上 23:00 前上床，保证明天有充足精力';
+  }
+
+  String _waterReminderText(DateTime now) {
+    const reminderHours = [10, 14, 17];
+    final remaining = reminderHours
+        .where((hour) => DateTime(now.year, now.month, now.day, hour).isAfter(now))
+        .map((hour) => '${hour.toString().padLeft(2, '0')}:00')
+        .toList();
+    if (remaining.isEmpty) {
+      return '今晚少量多次补水，明天从 10:00 开始提醒';
+    }
+    final countText = remaining.length == 1 ? '1 个' : '${remaining.length} 个';
+    return '在手机设 $countText 喝水提醒（${remaining.join('、')}）';
   }
 
   // 心情：22分满分（WHO-5 正向情感核心指标）

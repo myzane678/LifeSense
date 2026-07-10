@@ -53,4 +53,29 @@ void main() {
 
     expect(score, inInclusiveRange(0, 100));
   });
+  test('饮水建议不会显示已经过去的提醒时间', () {
+    final score = service.calculateScore(
+      mood: 3,
+      energy: 3,
+      stress: 2,
+      focus: 3,
+      sleepHours: 7,
+      waterCups: 0,
+    );
+
+    final suggestion = service.suggestionFor(
+      mood: 3,
+      energy: 3,
+      stress: 2,
+      focus: 3,
+      sleepHours: 7,
+      waterCups: 0,
+      score: score,
+      now: DateTime(2026, 7, 10, 10, 6),
+    );
+
+    expect(suggestion, isNot(contains('10:00')));
+    expect(suggestion, contains('14:00'));
+    expect(suggestion, contains('17:00'));
+  });
 }
