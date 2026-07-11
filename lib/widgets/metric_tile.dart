@@ -22,9 +22,9 @@ class MetricTile extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Text(label, style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: 2),
             Text(value, style: Theme.of(context).textTheme.titleLarge),
           ],
         ),

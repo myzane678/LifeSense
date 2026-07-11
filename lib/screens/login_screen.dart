@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
 import '../state/life_entry_provider.dart';
-import '../state/profile_provider.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -68,8 +67,6 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => isSubmitting = true);
     try {
       final authService = context.read<AuthService>();
-      final entryProvider = context.read<LifeEntryProvider>();
-      final profileProvider = context.read<ProfileProvider>();
       if (isRegisterMode) {
         await authService.register(
           email: email,
@@ -79,8 +76,6 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         await authService.signIn(email: email, password: password);
       }
-      await entryProvider.loadEntries();
-      await profileProvider.loadCloudProfile();
     } on AGCAuthException catch (error) {
       if (!mounted) return;
       showMessage(authErrorMessage(error));
@@ -165,7 +160,7 @@ class _LoginScreenState extends State<LoginScreen> {
     await authService.continueAsGuest();
     entryProvider.setGuestMode(true);
     await entryProvider.loadGuestEntries();
-    setState(() => isSubmitting = false);
+    if (mounted) setState(() => isSubmitting = false);
   }
 
   void showMessage(String message) {
@@ -303,7 +298,9 @@ class _LoginScreenState extends State<LoginScreen> {
               TextButton(
                 onPressed: isSubmitting ? null : continueAsGuest,
                 style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+                  foregroundColor: Theme.of(
+                    context,
+                  ).colorScheme.onSurfaceVariant,
                 ),
                 child: const Text('暂不登录，以访客身份使用'),
               ),
@@ -312,8 +309,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Text(
                   '访客模式下数据仅存本机，换机或卸载后无法恢复。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ),

@@ -32,8 +32,12 @@ class ReminderService extends ChangeNotifier {
 
   Future<void> initialize() async {
     tz.initializeTimeZones();
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initializationSettings = InitializationSettings(android: androidSettings);
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const initializationSettings = InitializationSettings(
+      android: androidSettings,
+    );
     await _notifications.initialize(initializationSettings);
 
     final prefs = await SharedPreferences.getInstance();
@@ -65,7 +69,7 @@ class ReminderService extends ChangeNotifier {
     await prefs.setInt(_minuteKey, _minute);
     await _scheduleDailyReminder();
     notifyListeners();
-    UserSettingsService.instance.syncToCloud();
+    await UserSettingsService.instance.syncReminderSettings();
     return true;
   }
 
@@ -75,7 +79,7 @@ class ReminderService extends ChangeNotifier {
     await prefs.setBool(_enabledKey, false);
     await _notifications.cancel(_notificationId);
     notifyListeners();
-    UserSettingsService.instance.syncToCloud();
+    await UserSettingsService.instance.syncReminderSettings();
   }
 
   Future<void> setReminderTime(TimeOfDay time) async {
@@ -86,12 +90,14 @@ class ReminderService extends ChangeNotifier {
     await prefs.setInt(_minuteKey, _minute);
     if (_enabled) await _scheduleDailyReminder();
     notifyListeners();
-    UserSettingsService.instance.syncToCloud();
+    await UserSettingsService.instance.syncReminderSettings();
   }
 
   Future<bool> _requestPermission() async {
-    final android = _notifications.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     if (android == null) return true;
     return await android.requestNotificationsPermission() ?? false;
   }

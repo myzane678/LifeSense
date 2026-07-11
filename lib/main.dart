@@ -13,15 +13,16 @@ import 'state/profile_provider.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeAgc();
-  // 从云端拉取设置写入本地，之后各 Service 初始化时直接读本地
-  await UserSettingsService.instance.loadAndApply();
-
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AuthService()),
-        ChangeNotifierProvider(create: (_) => ReminderService()..initialize()),
-        ChangeNotifierProvider(create: (_) => DigestPreferencesService()..initialize()),
+        ChangeNotifierProvider(create: (_) => ReminderService()),
+        ChangeNotifierProvider(
+          create: (_) => DigestPreferencesService(
+            userSettingsService: UserSettingsService.instance,
+          ),
+        ),
         ChangeNotifierProvider(create: (_) => LifeEntryProvider()),
         ChangeNotifierProvider(create: (_) => ProfileProvider()..load()),
       ],

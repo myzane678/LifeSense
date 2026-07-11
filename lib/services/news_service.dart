@@ -1,10 +1,18 @@
 import 'dart:convert';
 
+import 'package:html/dom.dart' as dom;
+import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xml/xml.dart';
 
 import '../models/news_item.dart';
+
+class ArticleDetail {
+  const ArticleDetail({required this.content, this.publishedAt});
+  final String content;
+  final DateTime? publishedAt;
+}
 
 class NewsFetchResult {
   const NewsFetchResult({required this.items, required this.networkError});
@@ -14,14 +22,31 @@ class NewsFetchResult {
 }
 
 class NewsService {
-  static const _cachePrefix = 'news_cache_v7_';
+  static const _cachePrefix = 'news_cache_v14_';
   static const _cacheTtlMs = 3600000;
-  static const _maxItems = 8;
+  static const _maxItems = 10;
+
+  static final NewsService instance = NewsService._();
+  NewsService._({http.Client? client, DateTime Function()? now})
+    : _client = client ?? http.Client(),
+      _now = now ?? DateTime.now;
+  factory NewsService({http.Client? client, DateTime Function()? now}) =>
+      client != null || now != null
+      ? NewsService._(client: client, now: now)
+      : instance;
+
+  final http.Client _client;
+  final DateTime Function() _now;
+
+  // link → 从网页提取的准确发布时间（供列表刷新使用）
+  final Map<String, DateTime> _detailTimeCache = {};
 
   static const _categories = {
     'frontier': _FeedCategory(
       sources: [
         _FeedSource('https://www.ithome.com/rss/', 'IT之家'),
+        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
+        _FeedSource('https://www.tmtpost.com/feed', '钛媒体'),
         _FeedSource('https://36kr.com/feed', '36氪'),
         _FeedSource('https://sspai.com/feed', '少数派'),
       ],
@@ -70,14 +95,14 @@ class NewsService {
       sources: [
         _FeedSource('https://sspai.com/feed', '少数派'),
         _FeedSource('https://36kr.com/feed', '36氪'),
+        _FeedSource('https://www.huxiu.com/rss/0.xml', '虎嗅'),
       ],
       includeKeywords: [
         '学习方法',
         '学习效率',
+        '学习计划',
         '复习',
-        '预习',
         '笔记',
-        '课程',
         '考试',
         '知识管理',
         '时间管理',
@@ -86,10 +111,14 @@ class NewsService {
         '备考',
         '刷题',
         '自习',
-        '专注',
-        '记忆',
+        '专注力',
+        '记忆力',
         '错题',
         '阅读方法',
+        '阅读习惯',
+        '深度学习',
+        '思维方式',
+        '认知',
       ],
       excludeKeywords: [
         '融资',
@@ -105,6 +134,9 @@ class NewsService {
         '灯光',
         '设备',
         '旅行',
+        '旅游',
+        '游记',
+        '景点',
         '出行',
         '饮品',
         'DIY',
@@ -119,11 +151,19 @@ class NewsService {
         '优惠',
         '联名',
         '娱乐',
+        '美食',
+        '摄影',
+        '穿搭',
       ],
       allowFallback: false,
+      titleMatchRequired: true,
     ),
     'business': _FeedCategory(
-      sources: [_FeedSource('https://36kr.com/feed', '36氪')],
+      sources: [
+        _FeedSource('https://36kr.com/feed', '36氪'),
+        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
+        _FeedSource('https://www.tmtpost.com/feed', '钛媒体'),
+      ],
       includeKeywords: [
         '财经',
         '商业',
@@ -147,6 +187,7 @@ class NewsService {
     'career': _FeedCategory(
       sources: [
         _FeedSource('https://36kr.com/feed', '36氪'),
+        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
         _FeedSource('https://sspai.com/feed', '少数派'),
       ],
       includeKeywords: [
@@ -190,6 +231,7 @@ class NewsService {
     'product': _FeedCategory(
       sources: [
         _FeedSource('https://sspai.com/feed', '少数派'),
+        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
         _FeedSource('https://36kr.com/feed', '36氪'),
       ],
       includeKeywords: [
@@ -206,7 +248,31 @@ class NewsService {
         '工作流',
         '工具',
       ],
-      excludeKeywords: ['促销', '优惠', '联名', '娱乐', '芯片', '火箭', '航天'],
+      excludeKeywords: [
+        '促销',
+        '优惠',
+        '联名',
+        '娱乐',
+        '芯片',
+        '火箭',
+        '航天',
+        'AI',
+        '人工智能',
+        '大模型',
+        '模型',
+        'Agent',
+        '智能体',
+        '机器人',
+        '自动驾驶',
+        '融资',
+        '财报',
+        '营收',
+        '供应链',
+        '量产',
+        '汽车',
+        '手机',
+        '硬件',
+      ],
       allowFallback: false,
     ),
     'campus': _FeedCategory(
@@ -238,154 +304,604 @@ class NewsService {
     ),
     'politics': _FeedCategory(
       sources: [
-        _FeedSource('http://www.people.com.cn/rss/politics.xml', '人民日报'),
-        _FeedSource('http://www.people.com.cn/rss/society.xml', '人民日报'),
+        _FeedSource('https://www.chinanews.com.cn/rss/importnews.xml', '中新网'),
+        _FeedSource('https://feeds.bbci.co.uk/zhongwen/simp/rss.xml', 'BBC中文'),
       ],
       includeKeywords: [
-        '发展',
+        '习近平',
+        '国务院',
+        '政府',
+        '外交部',
+        '中央',
+        '全国人大',
+        '政协',
         '政策',
+        '发布',
+        '会议',
         '改革',
-        '经济',
-        '民生',
-        '社会',
-        '科技',
-        '教育',
-        '就业',
-        '创新',
-        '建设',
         '治理',
-        '安全',
-        '环境',
-        '医疗',
-        '脱贫',
-        '乡村',
-        '青年',
         '法治',
-        '数字',
+        '民生',
+        '就业',
+        '医疗',
+        '教育',
+        '社保',
+        '财政',
+        '央行',
+        '乡村振兴',
+        '经济',
+        '中美',
+        '外交',
+        '国际',
+        '联合国',
+        '选举',
+        '安全',
+        '制裁',
+        '冲突',
       ],
-      excludeKeywords: ['广告', '促销', '娱乐', '明星', '八卦'],
-      allowFallback: true,
+      excludeKeywords: [
+        '广告',
+        '促销',
+        '娱乐',
+        '明星',
+        '八卦',
+        '体育',
+        '赛事',
+        '越野赛',
+        '旅游',
+        '风光',
+        '新书',
+        '开店',
+        '生日快乐',
+        'CEO',
+        '粉笔',
+      ],
+      allowFallback: false,
+      maxAgeDays: 3,
+      relatedBackfillMaxAgeDays: 7,
+      relatedMinItems: 3,
     ),
   };
 
-  Future<String> fetchArticleSummary(NewsItem item) async {
+  Future<ArticleDetail> fetchArticleDetail(NewsItem item) async {
+    // 36氪快讯是多条聚合页，直接用 RSS 数据
+    if (item.link.contains('newsflashes')) {
+      return ArticleDetail(
+        content: item.summary,
+        publishedAt: item.publishedAt,
+      );
+    }
     try {
-      final response = await http
+      final response = await _client
           .get(Uri.parse(item.link))
           .timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) return item.summary;
+      if (response.statusCode != 200) {
+        return ArticleDetail(
+          content: item.summary,
+          publishedAt: item.publishedAt,
+        );
+      }
       final body = utf8.decode(response.bodyBytes);
       final article = _extractArticleText(body);
-      if (article.length < 80) return item.summary;
-      return _summarizeArticle(article);
+      final safeArticle = _looksPollutedArticle(article) ? '' : article;
+      final publishedAt = _sanitizePublishedTime(
+        _extractPublishedTime(body),
+        item.publishedAt,
+      );
+      // 只有比 RSS 时间更精确（不同）才存入缓存
+      if (publishedAt != item.publishedAt) {
+        _detailTimeCache[item.link] = publishedAt;
+      }
+      return ArticleDetail(
+        content: safeArticle.length >= 80
+            ? _truncateAtBoundary(safeArticle, 1800)
+            : item.summary,
+        publishedAt: publishedAt,
+      );
     } catch (_) {
-      return item.summary;
+      return ArticleDetail(
+        content: item.summary,
+        publishedAt: item.publishedAt,
+      );
     }
+  }
+
+  /// 若该链接已被打开过，返回从网页提取的准确时间，否则返回 null
+  DateTime? getDetailTime(String link) => _detailTimeCache[link];
+
+  // 兜底校验：抽取时间超过"现在"5分钟 或比RSS时间晚超6小时，说明抓到了渲染时间
+  DateTime _sanitizePublishedTime(DateTime? extracted, DateTime rssTime) {
+    if (extracted == null) return rssTime;
+    final now = DateTime.now();
+    if (extracted.isAfter(now.add(const Duration(minutes: 5)))) return rssTime;
+    if (extracted.isAfter(rssTime.add(const Duration(hours: 6)))) {
+      return rssTime;
+    }
+    return extracted;
+  }
+
+  DateTime? _extractPublishedTime(String html) {
+    // 最优先：<time datetime="..."> 语义标签
+    final timeTagMatch = RegExp(
+      r'<time\b[^>]*\bdatetime="([^"]+)"',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (timeTagMatch != null) {
+      final dt = DateTime.tryParse(timeTagMatch.group(1)!);
+      if (dt != null) return dt.toLocal();
+    }
+
+    // 优先读 JSON-LD datePublished
+    final jsonLdMatch = RegExp(
+      r'"datePublished"\s*:\s*"([^"]+)"',
+      caseSensitive: false,
+    ).firstMatch(html);
+    if (jsonLdMatch != null) {
+      final dt = DateTime.tryParse(jsonLdMatch.group(1)!);
+      if (dt != null) return dt.toLocal();
+    }
+
+    // Open Graph / 通用 meta
+    for (final attr in [
+      r'property="article:published_time"\s+content="([^"]+)"',
+      r'name="publish_time"\s+content="([^"]+)"',
+      r'name="publishdate"\s+content="([^"]+)"',
+      r'itemprop="datePublished"\s+content="([^"]+)"',
+    ]) {
+      final m = RegExp(attr, caseSensitive: false).firstMatch(html);
+      if (m != null) {
+        final dt = DateTime.tryParse(m.group(1)!);
+        if (dt != null) return dt.toLocal();
+      }
+    }
+
+    // 常见中文时间格式（36氪/IT之家/少数派）
+    final cnPatterns = [
+      RegExp(r'(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})'),
+      RegExp(r'(\d{4})年(\d{2})月(\d{2})日\s*(\d{2}):(\d{2})'),
+    ];
+    for (final pat in cnPatterns) {
+      final m = pat.firstMatch(html);
+      if (m != null) {
+        final dt = DateTime.tryParse(
+          '${m.group(1)!}-${m.group(2)!}-${m.group(3)!}T${m.group(4)!}:${m.group(5)!}:00+08:00',
+        );
+        if (dt != null) return dt.toLocal();
+      }
+    }
+    return null;
   }
 
   String _extractArticleText(String html) {
-    // 先去掉脚本、样式和导航结构，再做内容提取
-    final stripped = html
-        .replaceAll(
-          RegExp(r'<script[^>]*>[\s\S]*?<\/script>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(r'<style[^>]*>[\s\S]*?<\/style>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'<(?:nav|header|footer|aside|menu)[^>]*>[\s\S]*?<\/(?:nav|header|footer|aside|menu)>',
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .replaceAll(
-          // 删除列表结构，避免速览目录、导航列表混入正文提取
-          RegExp(r'<(?:ul|ol)[^>]*>[\s\S]*?<\/(?:ul|ol)>', caseSensitive: false),
-          '',
-        );
+    final domText = _extractArticleTextFromDom(html);
+    if (domText.isNotEmpty) return domText;
 
-    final candidates = [
-      RegExp(r'<article[^>]*>([\s\S]*?)<\/article>', caseSensitive: false),
+    final stripped = _removeNoiseBlocks(html);
+    final primary = _extractFromPrimaryArticleContainers(stripped);
+    if (primary.isNotEmpty) return primary;
+    final candidates = <_ArticleCandidate>[];
+
+    for (final pattern in [
+      RegExp(r'<article\b([^>]*)>([\s\S]*?)<\/article>', caseSensitive: false),
+      RegExp(r'<main\b([^>]*)>([\s\S]*?)<\/main>', caseSensitive: false),
       RegExp(
-        r'<div[^>]+class="[^"]*(?:post_content|post-content|article-content|news-content|content)[^"]*"[^>]*>([\s\S]*?)<\/div>',
+        r'<(?:div|section)\b([^>]*)>([\s\S]*?)<\/(?:div|section)>',
         caseSensitive: false,
       ),
-      RegExp(
-        r'<section[^>]+class="[^"]*(?:article|content)[^"]*"[^>]*>([\s\S]*?)<\/section>',
-        caseSensitive: false,
-      ),
+    ]) {
+      for (final match in pattern.allMatches(stripped)) {
+        final attrs = match.group(1) ?? '';
+        final block = match.group(2)!;
+        if (pattern.pattern.contains('div|section') &&
+            !_looksLikeArticle(attrs)) {
+          continue;
+        }
+        final paragraphs = _extractParagraphs(block);
+        final text = _trimArticleNoise(paragraphs.join('\n\n'));
+        final score = _candidateScore(text, block, attrs);
+        final minLength =
+            pattern.pattern.startsWith('<article') || _looksLikeArticle(attrs)
+            ? 80
+            : 120;
+        if (text.length >= minLength && score > 0) {
+          candidates.add(_ArticleCandidate(text, score));
+        }
+      }
+    }
+
+    candidates.sort((a, b) => b.score.compareTo(a.score));
+    return candidates.isNotEmpty ? candidates.first.text : '';
+  }
+
+  String _extractArticleTextFromDom(String html) {
+    final document = html_parser.parse(html);
+    _removeDomNoise(document);
+
+    final selectors = [
+      'article',
+      '#rwb_zw',
+      '#articleContent',
+      '#artibody',
+      '#contentText',
+      '#mainContent',
+      '.article-content',
+      '.article_content',
+      '.article-body',
+      '.article_body',
+      '.article-detail',
+      '.detail-content',
+      '.detail_content',
+      '.contentText',
+      '.content-text',
+      '.content_text',
+      '.text_con',
+      '.text-content',
+      '.news-content',
+      '.news_text',
+      '.TRS_Editor',
+      '.Custom_UnionStyle',
+      '.left_zw',
     ];
 
-    for (final pattern in candidates) {
-      final match = pattern.firstMatch(stripped);
-      if (match == null) continue;
-      final text = _cleanHtmlText(match.group(1)!);
-      if (text.length >= 80) return text;
+    _ArticleCandidate? best;
+    for (final selector in selectors) {
+      for (final element in document.querySelectorAll(selector)) {
+        final text = _trimArticleNoise(
+          _paragraphsFromElement(element).join('\n\n'),
+        );
+        if (text.length < 80) continue;
+        final score = _domArticleScore(text, element);
+        if (best == null || score > best.score) {
+          best = _ArticleCandidate(text, score);
+        }
+      }
     }
+    return best?.text ?? '';
+  }
 
-    // 提取所有 <p> 标签内容，比整页兜底干净得多
-    final pTexts = RegExp(r'<p[^>]*>([\s\S]*?)<\/p>', caseSensitive: false)
-        .allMatches(stripped)
-        .map((m) => _cleanHtmlText(m.group(1)!))
-        .where((t) => t.length >= 40)
+  void _removeDomNoise(dom.Document document) {
+    const selectors = [
+      'script',
+      'style',
+      'noscript',
+      'svg',
+      'iframe',
+      'form',
+      'button',
+      'input',
+      'select',
+      'textarea',
+      'nav',
+      'header',
+      'footer',
+      'aside',
+      '.recommend',
+      '.related',
+      '.share',
+      '.comment',
+      '.sidebar',
+      '.hot',
+      '.rank',
+      '.list',
+      '.latest',
+      '#recommend',
+      '#related',
+      '#share',
+      '#comment',
+      '#sidebar',
+    ];
+    for (final selector in selectors) {
+      for (final element in document.querySelectorAll(selector).toList()) {
+        element.remove();
+      }
+    }
+  }
+
+  List<String> _paragraphsFromElement(dom.Element element) {
+    final result = <String>[];
+    final seen = <String>{};
+    final paragraphNodes = element.querySelectorAll(
+      'p, h1, h2, h3, blockquote',
+    );
+    final nodes = paragraphNodes.isNotEmpty ? paragraphNodes : [element];
+    for (final node in nodes) {
+      final text = node.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final normalized = text.replaceAll(RegExp(r'\s+'), '');
+      if (normalized.isEmpty || seen.contains(normalized)) continue;
+      if (_isNoisyParagraph(text, node.outerHtml)) continue;
+      seen.add(normalized);
+      result.add(text);
+    }
+    return result;
+  }
+
+  int _domArticleScore(String text, dom.Element element) {
+    var score = text.length;
+    score += RegExp(r'[。！？!?]').allMatches(text).length * 30;
+    score += element.querySelectorAll('p').length * 40;
+    final attrs = '${element.id} ${element.className}'.toLowerCase();
+    if (RegExp(
+      r'(article|content|text|body|detail|trs_editor)',
+    ).hasMatch(attrs)) {
+      score += 300;
+    }
+    if (_looksLikeListingContent(text, element.outerHtml, attrs)) {
+      score -= text.length + 1200;
+    }
+    return score;
+  }
+
+  String _extractFromPrimaryArticleContainers(String html) {
+    final patterns = [
+      RegExp(
+        r'<(?:div|section|article)\b([^>]*(?:id|class)="[^"]*(?:article[-_ ]?content|article[-_ ]?body|content[-_ ]?text|contentText|text[-_ ]?con|text[-_ ]?content|main[-_ ]?content|detail[-_ ]?content|detail[-_ ]?body|news[-_ ]?text|news[-_ ]?content)[^"]*"[^>]*)>([\s\S]*?)<\/(?:div|section|article)>',
+        caseSensitive: false,
+      ),
+      RegExp(r'<article\b([^>]*)>([\s\S]*?)<\/article>', caseSensitive: false),
+    ];
+
+    _ArticleCandidate? best;
+    for (final pattern in patterns) {
+      for (final match in pattern.allMatches(html)) {
+        final attrs = match.group(1) ?? '';
+        final block = match.group(2)!;
+        if (_isContainerNoise(attrs)) continue;
+        final text = _trimArticleNoise(_extractParagraphs(block).join('\n\n'));
+        if (text.length < 80) continue;
+        final score = _candidateScore(text, block, attrs) + 500;
+        if (best == null || score > best.score) {
+          best = _ArticleCandidate(text, score);
+        }
+      }
+    }
+    return best?.text ?? '';
+  }
+
+  String _trimArticleNoise(String text) {
+    final paragraphs = text
+        .split(RegExp(r'\n{2,}'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
         .toList();
-    if (pTexts.isNotEmpty) {
-      final joined = pTexts.join(' ');
-      if (joined.length >= 80) return joined;
+    final kept = <String>[];
+    var titleLikeRun = 0;
+    for (final paragraph in paragraphs) {
+      if (_isArticleTailNoise(paragraph)) break;
+      if (_looksLikeRelatedTitle(paragraph)) {
+        titleLikeRun++;
+        if (titleLikeRun >= 3) {
+          final removeFrom = kept.length >= 2 ? kept.length - 2 : 0;
+          kept.removeRange(removeFrom, kept.length);
+          break;
+        }
+      } else {
+        titleLikeRun = 0;
+      }
+      kept.add(paragraph);
+    }
+    return kept.join('\n\n').trim();
+  }
+
+  bool _looksLikeRelatedTitle(String text) {
+    final compact = text.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length < 10 || compact.length > 46) return false;
+    if (RegExp(r'[。；;]').hasMatch(compact)) return false;
+    if (RegExp(r'\d{4}年\d{2}月\d{2}日').hasMatch(compact)) return true;
+    return RegExp(
+      r'[：:？?！!]|网友|美国|中国|台军|台风|火箭|大学|生日快乐|CEO|开店|欧洲',
+    ).hasMatch(compact);
+  }
+
+  bool _isArticleTailNoise(String text) {
+    if (RegExp(r'\d{4}年\d{2}月\d{2}日\s+\d{2}:\d{2}:\d{2}').hasMatch(text)) {
+      return true;
+    }
+    const markers = [
+      '相关推荐',
+      '推荐阅读',
+      '相关新闻',
+      '更多新闻',
+      '热门新闻',
+      '延伸阅读',
+      '责任编辑',
+      '原标题',
+      '[编辑:',
+      '【编辑:',
+      '编辑：',
+      '编辑:',
+    ];
+    if (markers.any(text.contains)) return true;
+    final punctuationCount = RegExp(r'[。！？!?]').allMatches(text).length;
+    final titleLike = text.length <= 45 && punctuationCount == 0;
+    final clickbait = RegExp(r'[？?！!：:]').hasMatch(text);
+    return titleLike && clickbait;
+  }
+
+  String _removeNoiseBlocks(String html) {
+    var result = html;
+    for (final tag in [
+      'script',
+      'style',
+      'noscript',
+      'svg',
+      'iframe',
+      'form',
+      'button',
+      'input',
+      'select',
+      'textarea',
+      'nav',
+      'header',
+      'footer',
+      'aside',
+      'menu',
+    ]) {
+      result = result.replaceAll(
+        RegExp('<$tag\\b[^>]*>[\\s\\S]*?<\\/$tag>', caseSensitive: false),
+        ' ',
+      );
+      result = result.replaceAll(
+        RegExp('<$tag\\b[^>]*/?>', caseSensitive: false),
+        ' ',
+      );
+    }
+    return result;
+  }
+
+  bool _looksLikeArticle(String attrs) {
+    final value = attrs.toLowerCase();
+    if (_isContainerNoise(value)) return false;
+    return RegExp(
+      r'(article[-_ ]?(content|body|detail)?|post[-_ ]?content|entry[-_ ]?content|detail[-_ ]?(content|body)|rich-text|markdown|prose|text[-_ ]?con|contenttext|news[-_ ]?(text|content))',
+    ).hasMatch(value);
+  }
+
+  bool _isContainerNoise(String attrs) {
+    return RegExp(
+      r'(comment|share|author|profile|recommend|related|sidebar|footer|header|nav|rank|hot|list|roll|latest)',
+    ).hasMatch(attrs.toLowerCase());
+  }
+
+  List<String> _extractParagraphs(String html) {
+    final result = <String>[];
+    final seen = <String>{};
+    final blocks = RegExp(
+      r'<(?:p|h1|h2|h3|blockquote)\b[^>]*>([\s\S]*?)<\/(?:p|h1|h2|h3|blockquote)>',
+      caseSensitive: false,
+    ).allMatches(html);
+
+    for (final match in blocks) {
+      final raw = match.group(1)!;
+      final text = _cleanHtmlText(raw);
+      final normalized = text.replaceAll(RegExp(r'\s+'), '');
+      if (normalized.isEmpty || seen.contains(normalized)) continue;
+      if (_isNoisyParagraph(text, raw)) continue;
+      seen.add(normalized);
+      result.add(text);
     }
 
-    return _cleanHtmlText(stripped);
+    if (result.isNotEmpty) return result;
+    final text = _cleanHtmlText(html);
+    return _isNoisyParagraph(text, html) ? const [] : [text];
+  }
+
+  int _candidateScore(String text, String html, String attrs) {
+    var score = text.length;
+    score += RegExp(r'[。！？!?\.]').allMatches(text).length * 20;
+    score += RegExp(r'<p\b', caseSensitive: false).allMatches(html).length * 30;
+
+    final attr = attrs.toLowerCase();
+    if (RegExp(
+      r'(article|content|post|body|entry|detail|rich-text)',
+    ).hasMatch(attr)) {
+      score += 180;
+    }
+    if (RegExp(
+      r'(comment|share|author|profile|recommend|related|sidebar|footer|header|nav)',
+    ).hasMatch(attr)) {
+      score -= 500;
+    }
+
+    final linkText = RegExp(
+      r'<a\b[^>]*>([\s\S]*?)<\/a>',
+      caseSensitive: false,
+    ).allMatches(html).map((m) => _cleanHtmlText(m.group(1)!)).join();
+    if (text.isNotEmpty && linkText.length / text.length > 0.25) score -= 500;
+
+    score -= _boilerplateHits(text) * 120;
+    if (_looksLikeListingContent(text, html, attrs)) score -= text.length + 800;
+    return score;
+  }
+
+  bool _looksPollutedArticle(String text) {
+    final paragraphs = text
+        .split(RegExp(r'\n{2,}'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (paragraphs.length < 6) return false;
+
+    var titleLikeRun = 0;
+    for (final paragraph in paragraphs) {
+      if (_looksLikeRelatedTitle(paragraph)) {
+        titleLikeRun += 1;
+        if (titleLikeRun >= 3) return true;
+      } else {
+        titleLikeRun = 0;
+      }
+    }
+    return false;
+  }
+
+  bool _looksLikeListingContent(String text, String html, String attrs) {
+    final paragraphs = text
+        .split(RegExp(r'\n{2,}'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    if (paragraphs.length < 8) return false;
+
+    final shortLines = paragraphs.where((line) => line.length <= 34).length;
+    final articleLines = paragraphs.where((line) {
+      return line.length >= 45 && RegExp(r'[。！？]$').hasMatch(line);
+    }).length;
+    final listTags = RegExp(
+      r'<(?:li|ul|ol)\b',
+      caseSensitive: false,
+    ).allMatches(html).length;
+    final listingAttr = RegExp(
+      r'(list|recommend|related|hot|rank|sidebar|channel|scroll|roll|latest)',
+    ).hasMatch(attrs.toLowerCase());
+
+    return shortLines / paragraphs.length > 0.65 &&
+        articleLines <= 2 &&
+        (listTags >= 3 || listingAttr);
+  }
+
+  bool _isNoisyParagraph(String text, String rawHtml) {
+    if (text.length < 12) return true;
+    final compact = text.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length < 20 && _boilerplateHits(text) > 0) return true;
+    if (_boilerplateHits(text) >= 2) return true;
+
+    final linkText = RegExp(
+      r'<a\b[^>]*>([\s\S]*?)<\/a>',
+      caseSensitive: false,
+    ).allMatches(rawHtml).map((m) => _cleanHtmlText(m.group(1)!)).join();
+    return text.isNotEmpty && linkText.length / text.length > 0.35;
   }
 
   String _cleanHtmlText(String html) {
-    var text = html
-        .replaceAll(
-          RegExp(r'<script[^>]*>[\s\S]*?<\/script>', caseSensitive: false),
-          ' ',
-        )
-        .replaceAll(
-          RegExp(r'<style[^>]*>[\s\S]*?<\/style>', caseSensitive: false),
-          ' ',
-        )
-        .replaceAll(
-          RegExp(r'<noscript[^>]*>[\s\S]*?<\/noscript>', caseSensitive: false),
-          ' ',
-        )
-        .replaceAll(
-          RegExp(r'<(?:nav|header|footer|aside)[^>]*>[\s\S]*?<\/(?:nav|header|footer|aside)>', caseSensitive: false),
-          ' ',
-        )
-        .replaceAll(RegExp(r'<[^>]+>'), ' ');
+    var text = _removeNoiseBlocks(html).replaceAll(RegExp(r'<[^>]+>'), ' ');
     return _decodeHtmlEntities(text).replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  String _summarizeArticle(String text) {
-    final sentences = text
-        .split(RegExp(r'(?<=[。！？!?])'))
-        .map((e) => e.trim())
-        .where((e) => e.length >= 12)
-        .where((e) => !_isBoilerplate(e))
-        .toList();
+  String _truncateAtBoundary(String text, int maxLength) {
+    final trimmed = text.trim();
+    if (trimmed.length <= maxLength) return trimmed;
 
-    // 贪心拼接：加入下一句不超限才加，保证不截断句子中间
-    final buffer = StringBuffer();
-    for (final s in sentences) {
-      if (buffer.length + s.length > 320) break;
-      buffer.write(s);
-      if (buffer.length >= 100) break; // 够长就停，避免堆砌太多
+    var cut = -1;
+    const primary = '。！？!?；;.';
+    const secondary = '，,、 \n';
+    const closers = '"\u2019\u201D\u300B\uff09)]}';
+    for (var i = 0; i < maxLength && i < trimmed.length; i++) {
+      if (primary.contains(trimmed[i])) {
+        cut = i + 1;
+        while (cut < trimmed.length && closers.contains(trimmed[cut])) {
+          cut++;
+        }
+      }
     }
+    if (cut >= 40) return trimmed.substring(0, cut).trim();
 
-    if (buffer.isEmpty) {
-      // 无句号结构（列表式内容）：取前 200 字兜底
-      return text.length > 200 ? '${text.substring(0, 200)}…' : text;
+    for (var i = 0; i < maxLength && i < trimmed.length; i++) {
+      if (secondary.contains(trimmed[i])) cut = i;
     }
-    return buffer.toString();
+    if (cut >= 40) return '${trimmed.substring(0, cut).trim()}…';
+    return '${trimmed.substring(0, maxLength).trim()}…';
   }
 
-  bool _isBoilerplate(String text) {
+  int _boilerplateHits(String text) {
     const keywords = [
       '版权所有',
       'Copyright',
@@ -409,31 +925,77 @@ class NewsService {
       '来源：',
       '评论：',
       '相关推荐',
+      '推荐阅读',
       '注册',
+      '登录',
+      '关注',
+      '分享',
+      '收藏',
+      '举报',
+      '微博',
+      '微信',
+      '复制链接',
+      '点击下方按钮',
+      '少数派帐号',
+      '少数派作者',
+      '联合作者',
+      '日夜间',
+      '随系统',
+      '去APP听音频',
+      '跟内行聊见解',
+      '今日热点导览',
+      '听全文',
+      '关注作者',
+      '一级市场金融',
+      '推送和解读',
+      '聚焦全球优秀',
     ];
-    return keywords.any(text.contains);
+    return keywords.where(text.contains).length;
   }
 
-  String _decodeHtmlEntities(String text) => text
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#39;', "'")
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>');
-
-  Future<List<NewsItem>> fetchFeed(String key) async {
-    return (await fetchFeedResult(key)).items;
+  String _decodeHtmlEntities(String text) {
+    final named = text
+        .replaceAll('&nbsp;', ' ')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', "'")
+        .replaceAll('&#39;', "'")
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&mdash;', '—')
+        .replaceAll('&ndash;', '–')
+        .replaceAll('&ldquo;', '“')
+        .replaceAll('&rdquo;', '”')
+        .replaceAll('&lsquo;', '‘')
+        .replaceAll('&rsquo;', '’')
+        .replaceAll('&hellip;', '…');
+    return named.replaceAllMapped(RegExp(r'&#(x?[0-9a-fA-F]+);'), (match) {
+      final raw = match.group(1)!;
+      final code = raw.startsWith('x') || raw.startsWith('X')
+          ? int.tryParse(raw.substring(1), radix: 16)
+          : int.tryParse(raw);
+      return code == null ? match.group(0)! : String.fromCharCode(code);
+    });
   }
 
-  Future<NewsFetchResult> fetchFeedResult(String key) async {
+  Future<List<NewsItem>> fetchFeed(
+    String key, {
+    bool forceRefresh = false,
+  }) async {
+    return (await fetchFeedResult(key, forceRefresh: forceRefresh)).items;
+  }
+
+  Future<NewsFetchResult> fetchFeedResult(
+    String key, {
+    bool forceRefresh = false,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     final cacheKey = '$_cachePrefix$key';
     final tsKey = '${cacheKey}_ts';
     final cachedTs = prefs.getInt(tsKey) ?? 0;
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final now = _now().millisecondsSinceEpoch;
 
-    if (now - cachedTs < _cacheTtlMs) {
+    if (!forceRefresh && now - cachedTs < _cacheTtlMs) {
       final cached = prefs.getString(cacheKey);
       if (cached != null && cached.isNotEmpty) {
         return NewsFetchResult(
@@ -449,18 +1011,23 @@ class NewsService {
     }
 
     try {
-      final candidates = <NewsItem>[];
-      var fetchedAnySource = false;
-      for (final source in category.sources) {
-        final response = await http
-            .get(Uri.parse(source.url))
-            .timeout(const Duration(seconds: 10));
-        if (response.statusCode != 200) continue;
-        fetchedAnySource = true;
-        candidates.addAll(
-          _parseRss(utf8.decode(response.bodyBytes), source.name),
-        );
-      }
+      // 并发请求所有源，避免某个源超时拖垮整个分区
+      final results = await Future.wait(
+        category.sources.map((source) async {
+          try {
+            final response = await _client
+                .get(Uri.parse(source.url))
+                .timeout(const Duration(seconds: 10));
+            if (response.statusCode != 200) return <NewsItem>[];
+            return _parseRss(utf8.decode(response.bodyBytes), source.name);
+          } catch (_) {
+            return <NewsItem>[];
+          }
+        }),
+      );
+
+      final candidates = results.expand((list) => list).toList();
+      final fetchedAnySource = candidates.isNotEmpty;
 
       if (!fetchedAnySource) {
         final cached = _fallbackCache(prefs, cacheKey);
@@ -479,17 +1046,52 @@ class NewsService {
     }
   }
 
+  // 全局广告/促销标题模式，不区分分类
+  static const _adTitlePatterns = [
+    '上新',
+    '来玩~',
+    '等你来玩',
+    '欢迎体验',
+    '限时',
+    '免费领',
+    '立即领取',
+    '福利',
+    '优惠券',
+    '扫码',
+    '添加微信',
+    '点击领取',
+    '小程序上线',
+    '小程序上新',
+    '内测',
+    '报名',
+    '招募',
+    '抽奖',
+    '联名款',
+  ];
+
+  bool _looksLikeAd(NewsItem item) {
+    final title = item.title;
+    return _adTitlePatterns.any(title.contains);
+  }
+
   List<NewsItem> _selectItems(
     List<NewsItem> candidates,
     _FeedCategory category,
   ) {
-    final deduped = <String, _ScoredNewsItem>{};
-    final fallback = <String, _ScoredNewsItem>{};
+    final selectedByKey = <String, _ScoredNewsItem>{};
+    final relatedBackfillByKey = <String, _ScoredNewsItem>{};
+    final recent = <String, _ScoredNewsItem>{};
 
     for (final item in candidates) {
       final text = '${item.title} ${item.summary}';
       if (text.contains('�')) continue;
       if (_hasAny(text, category.excludeKeywords)) continue;
+      if (_looksLikeAd(item)) continue;
+      final ageHours = _now().difference(item.publishedAt).inHours;
+      if (ageHours < 0 ||
+          ageHours > category.effectiveRelatedBackfillMaxAgeDays * 24) {
+        continue;
+      }
       final keywordScore = _keywordScore(item, category);
       final key = _dedupeKey(item);
       if (key.isEmpty) continue;
@@ -498,41 +1100,100 @@ class NewsService {
         keywordScore + _freshnessScore(item),
       );
       if (keywordScore > 0) {
-        final existing = deduped[key];
+        final target = ageHours <= category.maxAgeDays * 24
+            ? selectedByKey
+            : relatedBackfillByKey;
+        final existing = target[key];
         if (existing == null || scored.score > existing.score) {
-          deduped[key] = scored;
+          target[key] = scored;
         }
-      } else {
-        fallback.putIfAbsent(key, () => scored);
+      } else if (ageHours <= category.maxAgeDays * 24) {
+        recent.putIfAbsent(key, () => scored);
       }
     }
 
-    final selected = deduped.values.toList()
-      ..sort((a, b) {
-        final scoreCompare = b.score.compareTo(a.score);
-        if (scoreCompare != 0) return scoreCompare;
-        return b.item.publishedAt.compareTo(a.item.publishedAt);
-      });
-
-    if (category.allowFallback && selected.length < 4) {
-      selected.addAll(fallback.values.take(4 - selected.length));
+    final selected = _sortScoredItems(selectedByKey.values);
+    if (selected.length < category.relatedMinItems) {
+      final selectedKeys = selectedByKey.keys;
+      selected.addAll(
+        _sortScoredItems(relatedBackfillByKey.values)
+            .where((item) => !selectedKeys.contains(_dedupeKey(item.item)))
+            .take(category.relatedMinItems - selected.length),
+      );
     }
 
-    return selected.take(_maxItems).map((e) => e.item).toList();
+    if (category.allowFallback && selected.length < _maxItems) {
+      selected.addAll(
+        _sortScoredItems(recent.values).take(_maxItems - selected.length),
+      );
+    }
+
+    final balanced = _balanceBySource(selected, maxItems: _maxItems);
+    return balanced.map((e) => e.item).toList();
+  }
+
+  List<_ScoredNewsItem> _sortScoredItems(Iterable<_ScoredNewsItem> items) {
+    return items.toList()..sort((a, b) {
+      final scoreCompare = b.score.compareTo(a.score);
+      if (scoreCompare != 0) return scoreCompare;
+      return b.item.publishedAt.compareTo(a.item.publishedAt);
+    });
+  }
+
+  List<_ScoredNewsItem> _balanceBySource(
+    List<_ScoredNewsItem> items, {
+    required int maxItems,
+  }) {
+    final grouped = <String, List<_ScoredNewsItem>>{};
+    for (final item in items) {
+      grouped.putIfAbsent(item.item.source, () => []).add(item);
+    }
+    final sources = grouped.keys.toList()
+      ..sort((a, b) {
+        final aFirst = grouped[a]!.first;
+        final bFirst = grouped[b]!.first;
+        final scoreCompare = bFirst.score.compareTo(aFirst.score);
+        if (scoreCompare != 0) return scoreCompare;
+        return bFirst.item.publishedAt.compareTo(aFirst.item.publishedAt);
+      });
+
+    final result = <_ScoredNewsItem>[];
+    var index = 0;
+    while (result.length < maxItems) {
+      var added = false;
+      for (final source in sources) {
+        final sourceItems = grouped[source]!;
+        if (index >= sourceItems.length) continue;
+        result.add(sourceItems[index]);
+        added = true;
+        if (result.length >= maxItems) break;
+      }
+      if (!added) break;
+      index++;
+    }
+    return result;
   }
 
   int _keywordScore(NewsItem item, _FeedCategory category) {
     var score = 0;
     for (final keyword in category.includeKeywords) {
-      if (_containsKeyword(item.title, keyword)) score += 3;
-      if (_containsKeyword(item.summary, keyword)) score += 1;
+      if (_containsKeyword(item.title, keyword)) {
+        score += 3;
+      } else if (!category.titleMatchRequired &&
+          _containsKeyword(item.summary, keyword)) {
+        score += 1;
+      }
     }
     return score;
   }
 
   int _freshnessScore(NewsItem item) {
-    final hours = DateTime.now().difference(item.publishedAt).inHours;
-    return hours >= 0 && hours <= 24 ? 1 : 0;
+    final hours = _now().difference(item.publishedAt).inHours;
+    if (hours < 0) return 0;
+    if (hours <= 6) return 5;
+    if (hours <= 24) return 3;
+    if (hours <= 48) return 1;
+    return 0;
   }
 
   bool _hasAny(String text, List<String> keywords) {
@@ -565,7 +1226,7 @@ class NewsService {
       final items = doc.findAllElements('item');
       final result = <NewsItem>[];
 
-      for (final item in items.take(12)) {
+      for (final item in items.take(40)) {
         final title = _text(item, 'title');
         final link = _text(item, 'link');
         final desc = _stripHtml(_text(item, 'description'));
@@ -574,7 +1235,7 @@ class NewsService {
         result.add(
           NewsItem(
             title: title,
-            summary: desc.length > 100 ? '${desc.substring(0, 100)}…' : desc,
+            summary: _truncateAtBoundary(desc, 100),
             link: link,
             source: source,
             publishedAt: pubDate,
@@ -595,31 +1256,36 @@ class NewsService {
     }
   }
 
-  String _stripHtml(String html) =>
-      html.replaceAll(RegExp(r'<[^>]*>'), '').replaceAll('&nbsp;', ' ').trim();
+  String _stripHtml(String html) => _decodeHtmlEntities(
+    html.replaceAll(RegExp(r'<[^>]*>'), ' '),
+  ).replaceAll(RegExp(r'\s+'), ' ').trim();
 
   DateTime _parseDate(String raw) {
     final normalized = raw.trim();
-    if (normalized.isEmpty) return DateTime.now();
+    if (normalized.isEmpty) return DateTime(1970);
+
     final parsed = DateTime.tryParse(normalized);
     if (parsed != null) return parsed.toLocal();
 
+    // RFC-822: "Wed, 10 Jul 2026 12:34:56 +0800" 或 "... CST"
     final rssMatch = RegExp(
-      r'^[A-Za-z]{3},\s+(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+([+-]\d{4}|GMT)$',
+      r'^[A-Za-z]{3},\s+(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+([+-]\d{4}|GMT|CST|UTC)$',
     ).firstMatch(normalized);
-    if (rssMatch == null) return DateTime.now();
+    if (rssMatch == null) return DateTime(1970);
 
     final month = _monthNumber(rssMatch.group(2)!);
-    if (month == null) return DateTime.now();
+    if (month == null) return DateTime(1970);
     final offset = rssMatch.group(7)!;
-    final isoOffset = offset == 'GMT'
-        ? 'Z'
-        : '${offset.substring(0, 3)}:${offset.substring(3)}';
+    final isoOffset = switch (offset) {
+      'GMT' || 'UTC' => 'Z',
+      'CST' => '+08:00',
+      _ => '${offset.substring(0, 3)}:${offset.substring(3)}',
+    };
     final iso =
         '${rssMatch.group(3)!}-${month.toString().padLeft(2, '0')}-'
         '${rssMatch.group(1)!.padLeft(2, '0')}T${rssMatch.group(4)!}:'
         '${rssMatch.group(5)!}:${rssMatch.group(6)!}$isoOffset';
-    return DateTime.tryParse(iso)?.toLocal() ?? DateTime.now();
+    return DateTime.tryParse(iso)?.toLocal() ?? DateTime(1970);
   }
 
   int? _monthNumber(String month) {
@@ -685,12 +1351,31 @@ class _FeedCategory {
     required this.includeKeywords,
     required this.excludeKeywords,
     this.allowFallback = true,
+    this.maxAgeDays = 7,
+    this.relatedBackfillMaxAgeDays,
+    this.relatedMinItems = 0,
+    this.titleMatchRequired = false,
   });
 
   final List<_FeedSource> sources;
   final List<String> includeKeywords;
   final List<String> excludeKeywords;
   final bool allowFallback;
+  final int maxAgeDays;
+  final int? relatedBackfillMaxAgeDays;
+  final int relatedMinItems;
+
+  int get effectiveRelatedBackfillMaxAgeDays =>
+      relatedBackfillMaxAgeDays ?? maxAgeDays;
+
+  /// 为 true 时关键词必须命中标题，命中摘要不算
+  final bool titleMatchRequired;
+}
+
+class _ArticleCandidate {
+  const _ArticleCandidate(this.text, this.score);
+  final String text;
+  final int score;
 }
 
 class _ScoredNewsItem {

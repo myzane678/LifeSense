@@ -12,6 +12,9 @@ import 'screens/login_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/weekly_report_screen.dart';
 import 'services/auth_service.dart';
+import 'services/digest_preferences_service.dart';
+import 'services/reminder_service.dart';
+import 'services/user_settings_service.dart';
 import 'state/life_entry_provider.dart';
 import 'state/profile_provider.dart';
 
@@ -84,31 +87,70 @@ class _AuthGate extends StatefulWidget {
 
 class _AuthGateState extends State<_AuthGate> {
   bool _started = false;
+  bool _sessionInitialized = false;
+  int _sessionGeneration = 0;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_started) return;
-    _started = true;
-    final authService = context.read<AuthService>();
-    final entryProvider = context.read<LifeEntryProvider>();
-    final profileProvider = context.read<ProfileProvider>();
-    _initialize(authService, entryProvider, profileProvider);
+    final authService = context.watch<AuthService>();
+    if (!_started) {
+      _started = true;
+      _initializeAuth(authService);
+    }
+    if (!authService.isSignedIn) {
+      if (_sessionInitialized) {
+        _sessionGeneration++;
+        context.read<DigestPreferencesService>().resetSession();
+      }
+      _sessionInitialized = false;
+    } else if (authService.isInitialized) {
+      _initializeSession(authService);
+    }
   }
 
-  Future<void> _initialize(
-    AuthService authService,
-    LifeEntryProvider entryProvider,
-    ProfileProvider profileProvider,
-  ) async {
+  Future<void> _initializeAuth(AuthService authService) async {
     await authService.initialize();
-    if (!mounted) return;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _initializeSession(AuthService authService) async {
+    if (_sessionInitialized) return;
+    _sessionInitialized = true;
+    final entryProvider = context.read<LifeEntryProvider>();
+    final reminderService = context.read<ReminderService>();
+    final digestPrefs = context.read<DigestPreferencesService>();
+    final profileProvider = context.read<ProfileProvider>();
     if (authService.isGuestMode) {
       entryProvider.setGuestMode(true);
+      await digestPrefs.initializeForUser('guest');
+      await reminderService.initialize();
       await entryProvider.loadGuestEntries();
       return;
     }
-    if (!authService.isSignedIn) return;
+
+    final uid = authService.currentUser?.uid;
+    if (uid == null) return;
+    final generation = ++_sessionGeneration;
+    UserSettingsRecord? cloudSettings;
+    try {
+      cloudSettings = await UserSettingsService.instance.loadForUser(uid);
+    } catch (_) {}
+    if (!mounted ||
+        generation != _sessionGeneration ||
+        authService.currentUser?.uid != uid) {
+      return;
+    }
+    if (cloudSettings != null) {
+      await UserSettingsService.instance.applyReminderSettings(cloudSettings);
+    }
+    await digestPrefs.initializeForUser(uid, cloudRecord: cloudSettings);
+    if (!mounted ||
+        generation != _sessionGeneration ||
+        authService.currentUser?.uid != uid) {
+      return;
+    }
+    await reminderService.initialize();
     await entryProvider.loadEntries();
     await profileProvider.loadCloudProfile();
   }

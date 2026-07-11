@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/digest_preferences_service.dart';
 import '../services/reminder_service.dart';
+import '../services/user_settings_service.dart';
 import '../state/life_entry_provider.dart';
 import '../state/profile_provider.dart';
 import '../widgets/digest_interest_dialog.dart';
@@ -49,9 +50,9 @@ class SettingsScreen extends StatelessWidget {
       );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('昵称已保存在本机，云同步稍后再试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('昵称已保存在本机，云同步稍后再试')));
     }
   }
 
@@ -93,9 +94,9 @@ class SettingsScreen extends StatelessWidget {
       if (!context.mounted) return;
       final error = context.read<ProfileProvider>().uploadError;
       if (error != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('头像上传失败：$error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('头像上传失败：$error')));
       }
     } catch (_) {}
   }
@@ -109,11 +110,37 @@ class SettingsScreen extends StatelessWidget {
       description: '选择 1-3 个方向，用于个性化每日速览内容。',
     );
     if (selected == null || !context.mounted) return;
-    await preferences.setSelectedIds(selected);
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('兴趣方向已更新')),
-    );
+    try {
+      await preferences.setSelectedIds(selected);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('兴趣方向已更新并同步到云端')));
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('已保存到本机，云同步失败'),
+          action: SnackBarAction(
+            label: '重试',
+            onPressed: () async {
+              try {
+                await preferences.retryPendingSync();
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('兴趣方向已同步到云端')));
+              } catch (_) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('云同步仍未成功，请稍后重试')));
+              }
+            },
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> toggleReminder(BuildContext context, bool enabled) async {
@@ -138,9 +165,9 @@ class SettingsScreen extends StatelessWidget {
     if (picked == null || !context.mounted) return;
     await reminder.setReminderTime(picked);
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('提醒时间已更新')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('提醒时间已更新')));
   }
 
   Future<void> recalculateEntries(BuildContext context) async {
@@ -165,14 +192,14 @@ class SettingsScreen extends StatelessWidget {
     try {
       await context.read<LifeEntryProvider>().recalculateAllEntries();
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('历史分数已重新计算并保存')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('历史分数已重新计算并保存')));
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('重新计算失败，请稍后再试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('重新计算失败，请稍后再试')));
     }
   }
 
@@ -203,24 +230,26 @@ class SettingsScreen extends StatelessWidget {
       );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('云端检查失败，已保留本机缓存')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('云端检查失败，已保留本机缓存')));
     }
   }
 
   Future<void> restoreFromCloud(BuildContext context) async {
     try {
-      final restored = await context.read<LifeEntryProvider>().restoreFromCloud();
+      final restored = await context
+          .read<LifeEntryProvider>()
+          .restoreFromCloud();
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(restored ? '已从云端恢复历史记录' : '云端暂无可恢复记录')),
       );
     } catch (_) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('云端恢复失败，请稍后再试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('云端恢复失败，请稍后再试')));
     }
   }
 
@@ -228,8 +257,8 @@ class SettingsScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除云端历史记录'),
-        content: const Text('这会删除当前账号云端和本机的全部 LifeSense 记录，删除后无法恢复。'),
+        title: const Text('删除云端数据'),
+        content: const Text('这会删除当前账号云端和本机的全部历史记录与设置，删除后无法恢复。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -243,8 +272,21 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
     if (confirmed != true || !context.mounted) return;
-    await context.read<LifeEntryProvider>().deleteCloudEntries();
-    if (context.mounted) Navigator.pop(context);
+    try {
+      final uid = context.read<AuthService>().currentUser?.uid;
+      if (uid == null) return;
+      await UserSettingsService.instance.deleteForUser(uid);
+      if (!context.mounted) return;
+      await context.read<LifeEntryProvider>().deleteCloudEntries();
+      if (!context.mounted) return;
+      await context.read<DigestPreferencesService>().clearForUser(uid);
+      if (context.mounted) Navigator.pop(context);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('云端删除失败，请稍后重试')));
+    }
   }
 
   Future<void> signOut(BuildContext context) async {
@@ -299,9 +341,9 @@ class SettingsScreen extends StatelessWidget {
     if (confirmed != true || !context.mounted) return;
     await context.read<LifeEntryProvider>().clearGuestEntries();
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('本机访客记录已清空')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('本机访客记录已清空')));
     }
   }
 
@@ -313,7 +355,9 @@ class SettingsScreen extends StatelessWidget {
     final digestPreferences = context.watch<DigestPreferencesService>();
     final isGuest = provider.isGuestMode;
     final colorScheme = Theme.of(context).colorScheme;
-    final email = isGuest ? '' : (context.read<AuthService>().currentUser?.email ?? '');
+    final email = isGuest
+        ? ''
+        : (context.read<AuthService>().currentUser?.email ?? '');
     final syncText = switch (provider.syncStatus) {
       SyncStatus.synced => '已同步到云端',
       SyncStatus.localCache => '当前显示本机缓存',
@@ -342,7 +386,10 @@ class SettingsScreen extends StatelessWidget {
                 children: [
                   CircleAvatar(
                     backgroundColor: colorScheme.primary,
-                    child: Icon(Icons.person_outline, color: colorScheme.onPrimary),
+                    child: Icon(
+                      Icons.person_outline,
+                      color: colorScheme.onPrimary,
+                    ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -357,7 +404,9 @@ class SettingsScreen extends StatelessWidget {
                           syncText,
                           style: TextStyle(
                             fontSize: 12,
-                            color: colorScheme.onPrimaryContainer.withAlpha(180),
+                            color: colorScheme.onPrimaryContainer.withAlpha(
+                              180,
+                            ),
                           ),
                         ),
                       ],
@@ -400,9 +449,15 @@ class SettingsScreen extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.cloud_upload_outlined, color: colorScheme.secondary),
+                        Icon(
+                          Icons.cloud_upload_outlined,
+                          color: colorScheme.secondary,
+                        ),
                         const SizedBox(width: 8),
-                        Text('开启云同步', style: Theme.of(context).textTheme.titleSmall),
+                        Text(
+                          '开启云同步',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -426,7 +481,10 @@ class SettingsScreen extends StatelessWidget {
               color: colorScheme.surfaceContainerLow,
               child: ListTile(
                 leading: Icon(Icons.delete_outline, color: colorScheme.error),
-                title: Text('清空本机记录', style: TextStyle(color: colorScheme.error)),
+                title: Text(
+                  '清空本机记录',
+                  style: TextStyle(color: colorScheme.error),
+                ),
                 subtitle: const Text('删除本机全部访客记录，不可恢复'),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => _clearGuestEntries(context),
@@ -480,8 +538,14 @@ class SettingsScreen extends StatelessWidget {
                   ),
                   const Divider(indent: 56, height: 0),
                   ListTile(
-                    leading: Icon(Icons.cloud_off_outlined, color: colorScheme.error),
-                    title: Text('删除云端历史记录', style: TextStyle(color: colorScheme.error)),
+                    leading: Icon(
+                      Icons.cloud_off_outlined,
+                      color: colorScheme.error,
+                    ),
+                    title: Text(
+                      '删除云端历史记录',
+                      style: TextStyle(color: colorScheme.error),
+                    ),
                     subtitle: const Text('删除当前账号云端和本机记录'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => deleteCloudEntries(context),
@@ -538,7 +602,9 @@ class _ReminderCard extends StatelessWidget {
           SwitchListTile(
             secondary: const Icon(Icons.notifications_active_outlined),
             title: const Text('每日记录提醒'),
-            subtitle: Text(reminder.enabled ? '每天 ${reminder.reminderTimeText} 提醒' : '已关闭'),
+            subtitle: Text(
+              reminder.enabled ? '每天 ${reminder.reminderTimeText} 提醒' : '已关闭',
+            ),
             value: reminder.enabled,
             onChanged: reminder.isInitialized ? onToggle : null,
           ),
@@ -597,9 +663,14 @@ class _ProfileCard extends StatelessWidget {
               child: CircleAvatar(
                 radius: 32,
                 backgroundColor: colorScheme.primaryContainer,
-                backgroundImage: avatarPath == null ? null : FileImage(File(avatarPath)),
+                backgroundImage: avatarPath == null
+                    ? null
+                    : FileImage(File(avatarPath)),
                 child: avatarPath == null
-                    ? Icon(Icons.add_a_photo_outlined, color: colorScheme.primary)
+                    ? Icon(
+                        Icons.add_a_photo_outlined,
+                        color: colorScheme.primary,
+                      )
                     : null,
               ),
             ),
