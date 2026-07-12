@@ -154,6 +154,9 @@ class _DailyDigestScreenState extends State<DailyDigestScreen>
             ? null
             : TabBar(
                 controller: _tabController,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 12),
                 tabs: [for (final t in _tabs) Tab(text: t.label)],
               ),
       ),
@@ -166,6 +169,7 @@ class _DailyDigestScreenState extends State<DailyDigestScreen>
                   switch (t.type) {
                     _DigestTabType.news => _NewsTab(
                       label: t.label,
+                      newsService: _newsService,
                       items: _data[t.id],
                       isLoading: _loading[t.id] == true,
                       hasNetworkError: _networkError[t.id] == true,
@@ -230,13 +234,14 @@ bool _sameTabs(List<_DigestTab> a, List<_DigestTab> b) {
 class _NewsTab extends StatelessWidget {
   const _NewsTab({
     required this.label,
+    required this.newsService,
     required this.items,
     required this.isLoading,
     required this.hasNetworkError,
     required this.onRefresh,
   });
-
   final String label;
+  final NewsService newsService;
   final List<NewsItem>? items;
   final bool isLoading;
   final bool hasNetworkError;
@@ -268,10 +273,12 @@ class _NewsTab extends StatelessWidget {
     return RefreshIndicator(
       onRefresh: () async => onRefresh(),
       child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(16),
         itemCount: items!.length,
         separatorBuilder: (_, _) => const SizedBox(height: 10),
-        itemBuilder: (context, index) => _NewsCard(item: items![index]),
+        itemBuilder: (context, index) =>
+            _NewsCard(item: items![index], newsService: newsService),
       ),
     );
   }
@@ -320,9 +327,10 @@ class _NewsEmptyState extends StatelessWidget {
 }
 
 class _NewsCard extends StatefulWidget {
-  const _NewsCard({required this.item});
+  const _NewsCard({required this.item, required this.newsService});
 
   final NewsItem item;
+  final NewsService newsService;
 
   @override
   State<_NewsCard> createState() => _NewsCardState();
@@ -339,7 +347,7 @@ class _NewsCardState extends State<_NewsCard> {
       child: InkWell(
         borderRadius: BorderRadius.circular(24),
         onTap: () async {
-          await _showNewsDetail(context, item);
+          await _showNewsDetail(context, item, widget.newsService);
           if (mounted) setState(() {});
         },
         child: Padding(
@@ -384,16 +392,17 @@ class _NewsCardState extends State<_NewsCard> {
 }
 
 class _NewsDetailSheet extends StatefulWidget {
-  const _NewsDetailSheet({required this.item});
+  const _NewsDetailSheet({required this.item, required this.newsService});
 
   final NewsItem item;
+  final NewsService newsService;
 
   @override
   State<_NewsDetailSheet> createState() => _NewsDetailSheetState();
 }
 
 class _NewsDetailSheetState extends State<_NewsDetailSheet> {
-  late final Future<ArticleDetail> _detailFuture = NewsService()
+  late final Future<ArticleDetail> _detailFuture = widget.newsService
       .fetchArticleDetail(widget.item);
 
   @override
@@ -478,12 +487,17 @@ class _NewsDetailSheetState extends State<_NewsDetailSheet> {
   }
 }
 
-Future<void> _showNewsDetail(BuildContext context, NewsItem item) {
+Future<void> _showNewsDetail(
+  BuildContext context,
+  NewsItem item,
+  NewsService newsService,
+) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (context) => _NewsDetailSheet(item: item),
+    builder: (context) =>
+        _NewsDetailSheet(item: item, newsService: newsService),
   );
 }
 

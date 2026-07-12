@@ -25,6 +25,8 @@ class NewsService {
   static const _cachePrefix = 'news_cache_v14_';
   static const _cacheTtlMs = 3600000;
   static const _maxItems = 10;
+  static const _maxArticlePages = 12;
+  static const _articleFetchBudget = Duration(seconds: 30);
 
   static final NewsService instance = NewsService._();
   NewsService._({http.Client? client, DateTime Function()? now})
@@ -371,39 +373,116 @@ class NewsService {
         publishedAt: item.publishedAt,
       );
     }
-    try {
-      final response = await _client
-          .get(Uri.parse(item.link))
-          .timeout(const Duration(seconds: 10));
-      if (response.statusCode != 200) {
-        return ArticleDetail(
-          content: item.summary,
-          publishedAt: item.publishedAt,
-        );
-      }
-      final body = utf8.decode(response.bodyBytes);
-      final article = _extractArticleText(body);
-      final safeArticle = _looksPollutedArticle(article) ? '' : article;
-      final publishedAt = _sanitizePublishedTime(
-        _extractPublishedTime(body),
-        item.publishedAt,
-      );
-      // 只有比 RSS 时间更精确（不同）才存入缓存
-      if (publishedAt != item.publishedAt) {
-        _detailTimeCache[item.link] = publishedAt;
-      }
-      return ArticleDetail(
-        content: safeArticle.length >= 80
-            ? _truncateAtBoundary(safeArticle, 1800)
-            : item.summary,
-        publishedAt: publishedAt,
-      );
-    } catch (_) {
+    final initialUri = Uri.tryParse(item.link);
+    if (initialUri == null || !_isInitialArticleUri(initialUri)) {
       return ArticleDetail(
         content: item.summary,
         publishedAt: item.publishedAt,
       );
     }
+
+    final visited = <String>{};
+    final pages = <String>[];
+    final deadline = _now().add(_articleFetchBudget);
+    var currentUri = initialUri;
+    DateTime? publishedAt;
+    try {
+      for (var page = 0; page < _maxArticlePages; page++) {
+        final key = _articleUriKey(currentUri);
+        if (!visited.add(key)) break;
+
+        final remaining = deadline.difference(_now());
+        if (remaining <= Duration.zero) break;
+        final requestTimeout = remaining < const Duration(seconds: 10)
+            ? remaining
+            : const Duration(seconds: 10);
+        final response = await _client.get(currentUri).timeout(requestTimeout);
+        if (response.statusCode != 200) break;
+
+        final body = utf8.decode(response.bodyBytes);
+        if (page == 0) {
+          publishedAt = _sanitizePublishedTime(
+            _extractPublishedTime(body),
+            item.publishedAt,
+          );
+        }
+        final extraction = _extractArticlePage(body, currentUri);
+        final article = extraction.text;
+        if (article.isEmpty || _looksPollutedArticle(article)) break;
+        pages.add(article);
+        final nextPage = extraction.nextPage;
+        if (nextPage == null || visited.contains(_articleUriKey(nextPage))) {
+          break;
+        }
+        currentUri = nextPage;
+      }
+    } catch (_) {
+      // 已提取的正文仍可用，首屏请求失败时回退 RSS 摘要。
+    }
+
+    final content = _mergeArticlePages(pages);
+    final safePublishedAt = publishedAt ?? item.publishedAt;
+    if (safePublishedAt != item.publishedAt) {
+      _detailTimeCache[item.link] = safePublishedAt;
+    }
+    return ArticleDetail(
+      content: content.isNotEmpty ? content : item.summary,
+      publishedAt: safePublishedAt,
+    );
+  }
+
+  _ArticlePageExtraction _extractArticlePage(String html, Uri currentUri) {
+    final document = html_parser.parse(html);
+    _removeDomNoise(document);
+    final text = _extractArticleTextFromDom(document);
+    return _ArticlePageExtraction(
+      text: text.isNotEmpty ? text : _extractArticleText(html),
+      nextPage: _extractSafeNextPageUri(document, currentUri),
+    );
+  }
+
+  Uri? _extractSafeNextPageUri(dom.Document document, Uri currentUri) {
+    dom.Element? next;
+    for (final element in document.querySelectorAll('*')) {
+      if (element.localName != 'link' && element.localName != 'a') continue;
+      final rel = element.attributes['rel']?.split(RegExp(r'\s+')) ?? const [];
+      if (rel.contains('next')) {
+        next = element;
+        break;
+      }
+    }
+    final href = next?.attributes['href'];
+    if (href == null || href.isEmpty || href.startsWith('#')) return null;
+    final candidate = currentUri.resolve(href);
+    return _isSafeArticleUri(candidate, currentUri.host) ? candidate : null;
+  }
+
+  bool _isInitialArticleUri(Uri uri) {
+    return (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty &&
+        uri.userInfo.isEmpty;
+  }
+
+  bool _isSafeArticleUri(Uri uri, String originHost) {
+    return uri.scheme == 'https' &&
+        uri.host.isNotEmpty &&
+        uri.host == originHost &&
+        uri.userInfo.isEmpty;
+  }
+
+  String _articleUriKey(Uri uri) => uri.removeFragment().toString();
+
+  String _mergeArticlePages(List<String> pages) {
+    final seen = <String>{};
+    final paragraphs = <String>[];
+    for (final page in pages) {
+      for (final paragraph in page.split(RegExp(r'\n{2,}'))) {
+        final trimmed = paragraph.trim();
+        final key = trimmed.replaceAll(RegExp(r'\s+'), '');
+        if (key.isNotEmpty && seen.add(key)) paragraphs.add(trimmed);
+      }
+    }
+    return paragraphs.join('\n\n');
   }
 
   /// 若该链接已被打开过，返回从网页提取的准确时间，否则返回 null
@@ -473,7 +552,8 @@ class NewsService {
   }
 
   String _extractArticleText(String html) {
-    final domText = _extractArticleTextFromDom(html);
+    final document = html_parser.parse(html);
+    final domText = _extractArticleTextFromDom(document);
     if (domText.isNotEmpty) return domText;
 
     final stripped = _removeNoiseBlocks(html);
@@ -501,7 +581,7 @@ class NewsService {
         final score = _candidateScore(text, block, attrs);
         final minLength =
             pattern.pattern.startsWith('<article') || _looksLikeArticle(attrs)
-            ? 80
+            ? 1
             : 120;
         if (text.length >= minLength && score > 0) {
           candidates.add(_ArticleCandidate(text, score));
@@ -513,8 +593,7 @@ class NewsService {
     return candidates.isNotEmpty ? candidates.first.text : '';
   }
 
-  String _extractArticleTextFromDom(String html) {
-    final document = html_parser.parse(html);
+  String _extractArticleTextFromDom(dom.Document document) {
     _removeDomNoise(document);
 
     final selectors = [
@@ -549,7 +628,7 @@ class NewsService {
         final text = _trimArticleNoise(
           _paragraphsFromElement(element).join('\n\n'),
         );
-        if (text.length < 80) continue;
+        if (text.isEmpty) continue;
         final score = _domArticleScore(text, element);
         if (best == null || score > best.score) {
           best = _ArticleCandidate(text, score);
@@ -576,16 +655,13 @@ class NewsService {
       'footer',
       'aside',
       '.recommend',
-      '.related',
       '.share',
       '.comment',
       '.sidebar',
       '.hot',
       '.rank',
-      '.list',
       '.latest',
       '#recommend',
-      '#related',
       '#share',
       '#comment',
       '#sidebar',
@@ -647,7 +723,7 @@ class NewsService {
         final block = match.group(2)!;
         if (_isContainerNoise(attrs)) continue;
         final text = _trimArticleNoise(_extractParagraphs(block).join('\n\n'));
-        if (text.length < 80) continue;
+        if (text.isEmpty) continue;
         final score = _candidateScore(text, block, attrs) + 500;
         if (best == null || score > best.score) {
           best = _ArticleCandidate(text, score);
@@ -664,31 +740,37 @@ class NewsService {
         .where((line) => line.isNotEmpty)
         .toList();
     final kept = <String>[];
-    var titleLikeRun = 0;
-    for (final paragraph in paragraphs) {
-      if (_isArticleTailNoise(paragraph)) break;
-      if (_looksLikeRelatedTitle(paragraph)) {
-        titleLikeRun++;
-        if (titleLikeRun >= 3) {
-          final removeFrom = kept.length >= 2 ? kept.length - 2 : 0;
-          kept.removeRange(removeFrom, kept.length);
-          break;
-        }
-      } else {
-        titleLikeRun = 0;
+    for (var index = 0; index < paragraphs.length; index++) {
+      final paragraph = paragraphs[index];
+      if (_isArticleTailNoise(paragraph) || _looksLikeTailCluster(paragraphs, index)) {
+        if (kept.isNotEmpty) break;
+        continue;
       }
       kept.add(paragraph);
     }
     return kept.join('\n\n').trim();
   }
 
+  bool _looksLikeTailCluster(List<String> paragraphs, int index) {
+    if (!_looksLikeRelatedTitle(paragraphs[index])) return false;
+    var runLength = 0;
+    for (var i = index; i < paragraphs.length && i < index + 4; i++) {
+      if (_looksLikeRelatedTitle(paragraphs[i]) || _isArticleTailNoise(paragraphs[i])) {
+        runLength += 1;
+      } else {
+        break;
+      }
+    }
+    return runLength >= 3;
+  }
+
   bool _looksLikeRelatedTitle(String text) {
     final compact = text.replaceAll(RegExp(r'\s+'), '');
-    if (compact.length < 10 || compact.length > 46) return false;
+    if (compact.length < 10 || compact.length > 90) return false;
     if (RegExp(r'[。；;]').hasMatch(compact)) return false;
     if (RegExp(r'\d{4}年\d{2}月\d{2}日').hasMatch(compact)) return true;
     return RegExp(
-      r'[：:？?！!]|网友|美国|中国|台军|台风|火箭|大学|生日快乐|CEO|开店|欧洲',
+      r'[：:？?！!|/]|网友|美国|中国|台军|台风|火箭|大学|生日快乐|CEO|开店|欧洲|特斯拉|Model|Optimus|DeepSeek|iPhone|ESG',
     ).hasMatch(compact);
   }
 
@@ -758,7 +840,7 @@ class NewsService {
 
   bool _isContainerNoise(String attrs) {
     return RegExp(
-      r'(comment|share|author|profile|recommend|related|sidebar|footer|header|nav|rank|hot|list|roll|latest)',
+      r'(comment|share|author|profile|recommend|sidebar|footer|header|nav|rank|hot|roll|latest)',
     ).hasMatch(attrs.toLowerCase());
   }
 
@@ -874,31 +956,6 @@ class NewsService {
   String _cleanHtmlText(String html) {
     var text = _removeNoiseBlocks(html).replaceAll(RegExp(r'<[^>]+>'), ' ');
     return _decodeHtmlEntities(text).replaceAll(RegExp(r'\s+'), ' ').trim();
-  }
-
-  String _truncateAtBoundary(String text, int maxLength) {
-    final trimmed = text.trim();
-    if (trimmed.length <= maxLength) return trimmed;
-
-    var cut = -1;
-    const primary = '。！？!?；;.';
-    const secondary = '，,、 \n';
-    const closers = '"\u2019\u201D\u300B\uff09)]}';
-    for (var i = 0; i < maxLength && i < trimmed.length; i++) {
-      if (primary.contains(trimmed[i])) {
-        cut = i + 1;
-        while (cut < trimmed.length && closers.contains(trimmed[cut])) {
-          cut++;
-        }
-      }
-    }
-    if (cut >= 40) return trimmed.substring(0, cut).trim();
-
-    for (var i = 0; i < maxLength && i < trimmed.length; i++) {
-      if (secondary.contains(trimmed[i])) cut = i;
-    }
-    if (cut >= 40) return '${trimmed.substring(0, cut).trim()}…';
-    return '${trimmed.substring(0, maxLength).trim()}…';
   }
 
   int _boilerplateHits(String text) {
@@ -1129,6 +1186,11 @@ class NewsService {
     }
 
     final balanced = _balanceBySource(selected, maxItems: _maxItems);
+    balanced.sort((a, b) {
+      final timeCompare = b.item.publishedAt.compareTo(a.item.publishedAt);
+      if (timeCompare != 0) return timeCompare;
+      return b.score.compareTo(a.score);
+    });
     return balanced.map((e) => e.item).toList();
   }
 
@@ -1235,7 +1297,7 @@ class NewsService {
         result.add(
           NewsItem(
             title: title,
-            summary: _truncateAtBoundary(desc, 100),
+            summary: desc,
             link: link,
             source: source,
             publishedAt: pubDate,
@@ -1337,6 +1399,12 @@ class NewsService {
       return [];
     }
   }
+}
+
+class _ArticlePageExtraction {
+  const _ArticlePageExtraction({required this.text, this.nextPage});
+  final String text;
+  final Uri? nextPage;
 }
 
 class _FeedSource {

@@ -72,6 +72,14 @@ void main() {
       result.items.map((item) => item.title),
       containsAll(['国务院召开经济政策会议', '地方政府推进社保改革', '国际组织讨论地区安全']),
     );
+    expect(
+      result.items.map((item) => item.title).toList(),
+      [
+        '国务院召开经济政策会议',
+        '国际组织讨论地区安全',
+        '地方政府推进社保改革',
+      ],
+    );
     expect(result.items, hasLength(3));
     expect(result.items.map((item) => item.title), isNot(contains('暑期旅游风光推荐')));
     expect(result.items.map((item) => item.source).toSet(), hasLength(2));
