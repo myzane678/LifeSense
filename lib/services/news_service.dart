@@ -22,7 +22,7 @@ class NewsFetchResult {
 }
 
 class NewsService {
-  static const _cachePrefix = 'news_cache_v14_';
+  static const _cachePrefix = 'news_cache_v18_';
   static const _cacheTtlMs = 3600000;
   static const _maxItems = 10;
   static const _maxArticlePages = 12;
@@ -43,15 +43,18 @@ class NewsService {
   // link → 从网页提取的准确发布时间（供列表刷新使用）
   final Map<String, DateTime> _detailTimeCache = {};
 
+  static const _sharedSources = [
+    _FeedSource('https://www.ithome.com/rss/', 'IT之家'),
+    _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
+    _FeedSource('https://www.tmtpost.com/feed', '钛媒体'),
+    _FeedSource('https://36kr.com/feed', '36氪'),
+    _FeedSource('https://sspai.com/feed', '少数派'),
+    _FeedSource('https://www.chinanews.com.cn/rss/importnews.xml', '中新网'),
+    _FeedSource('https://feeds.bbci.co.uk/zhongwen/simp/rss.xml', 'BBC中文'),
+  ];
+
   static const _categories = {
     'frontier': _FeedCategory(
-      sources: [
-        _FeedSource('https://www.ithome.com/rss/', 'IT之家'),
-        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
-        _FeedSource('https://www.tmtpost.com/feed', '钛媒体'),
-        _FeedSource('https://36kr.com/feed', '36氪'),
-        _FeedSource('https://sspai.com/feed', '少数派'),
-      ],
       includeKeywords: [
         'AI',
         '人工智能',
@@ -94,33 +97,27 @@ class NewsService {
       ],
     ),
     'study': _FeedCategory(
-      sources: [
-        _FeedSource('https://sspai.com/feed', '少数派'),
-        _FeedSource('https://36kr.com/feed', '36氪'),
-        _FeedSource('https://www.huxiu.com/rss/0.xml', '虎嗅'),
-      ],
       includeKeywords: [
-        '学习方法',
-        '学习效率',
-        '学习计划',
-        '复习',
-        '笔记',
-        '考试',
-        '知识管理',
+        '效率',
+        '工具',
+        '效率工具',
         '时间管理',
+        '知识管理',
+        '工作流',
+        '自动化',
+        '待办',
+        '日程',
+        '笔记',
+        '文档',
         '复盘',
-        '背单词',
-        '备考',
-        '刷题',
-        '自习',
-        '专注力',
-        '记忆力',
-        '错题',
-        '阅读方法',
-        '阅读习惯',
-        '深度学习',
-        '思维方式',
-        '认知',
+        '专注',
+        '协作',
+        '生产力',
+        '信息整理',
+        '阅读工具',
+        '搜索',
+        '整理',
+        '方法',
       ],
       excludeKeywords: [
         '融资',
@@ -157,15 +154,10 @@ class NewsService {
         '摄影',
         '穿搭',
       ],
-      allowFallback: false,
-      titleMatchRequired: true,
+      allowFallback: true,
+      titleMatchRequired: false,
     ),
     'business': _FeedCategory(
-      sources: [
-        _FeedSource('https://36kr.com/feed', '36氪'),
-        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
-        _FeedSource('https://www.tmtpost.com/feed', '钛媒体'),
-      ],
       includeKeywords: [
         '财经',
         '商业',
@@ -187,27 +179,27 @@ class NewsService {
       excludeKeywords: ['明星', '娱乐', '联名', '促销', 'AI', '人工智能', '大模型'],
     ),
     'career': _FeedCategory(
-      sources: [
-        _FeedSource('https://36kr.com/feed', '36氪'),
-        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
-        _FeedSource('https://sspai.com/feed', '少数派'),
-      ],
       includeKeywords: [
+        '成长',
+        '规划',
+        '长期主义',
+        '能力',
+        '自我管理',
+        '目标',
+        '复盘',
+        '习惯',
+        '沟通',
+        '表达',
+        '决策',
+        '认知',
+        '学习力',
         '职业',
         '职场',
-        '招聘',
-        '实习',
-        '就业',
-        '校招',
-        '秋招',
-        '春招',
-        '岗位',
-        '人才',
+        '求职',
         '简历',
         '面试',
-        '求职',
-        '毕业生',
-        '职业规划',
+        '实习',
+        '就业',
       ],
       excludeKeywords: [
         '娱乐',
@@ -228,14 +220,9 @@ class NewsService {
         '产业',
         '供应链',
       ],
-      allowFallback: false,
+      allowFallback: true,
     ),
     'product': _FeedCategory(
-      sources: [
-        _FeedSource('https://sspai.com/feed', '少数派'),
-        _FeedSource('https://www.ifanr.com/feed', '爱范儿'),
-        _FeedSource('https://36kr.com/feed', '36氪'),
-      ],
       includeKeywords: [
         '设计',
         '产品',
@@ -275,40 +262,55 @@ class NewsService {
         '手机',
         '硬件',
       ],
-      allowFallback: false,
+      allowFallback: true,
     ),
     'campus': _FeedCategory(
-      sources: [
-        _FeedSource('https://sspai.com/feed', '少数派'),
-        _FeedSource('https://36kr.com/feed', '36氪'),
-      ],
       includeKeywords: [
-        '校园',
-        '大学生',
-        '实习',
-        '考研',
-        '竞赛',
-        '毕业',
-        '就业',
-        '学习',
-        '教育',
-        '奖学金',
-        '保研',
-        '社团',
+        '教育部',
+        '教育政策',
+        '教育改革',
+        '高等教育',
+        '高校',
+        '大学',
+        '职业教育',
+        '人才培养',
+        '课程',
+        '教学',
+        '招生',
+        '考试',
+        '学生资助',
+        '毕业生',
+        '青年就业',
+        '就业服务',
+        '教师',
+        '科研',
+        '学科',
+        '产教融合',
       ],
-      excludeKeywords: ['娱乐', '明星', '联名', '促销', '芯片', '火箭', '航天'],
+      excludeKeywords: [
+        '公园',
+        '散步',
+        '音乐',
+        '专辑',
+        '苹果',
+        'OpenAI',
+        '旅游',
+        '风光',
+        '娱乐',
+        '明星',
+        '联名',
+        '促销',
+        '芯片',
+        '火箭',
+        '航天',
+      ],
       allowFallback: false,
     ),
     'kr': _FeedCategory(
-      sources: [_FeedSource('https://36kr.com/feed', '36氪')],
       includeKeywords: ['公司', '商业', '融资', '消费', '市场', '创业', '产业'],
       excludeKeywords: ['娱乐', '明星', '联名', '促销'],
     ),
     'politics': _FeedCategory(
-      sources: [
-        _FeedSource('https://www.chinanews.com.cn/rss/importnews.xml', '中新网'),
-        _FeedSource('https://feeds.bbci.co.uk/zhongwen/simp/rss.xml', 'BBC中文'),
-      ],
       includeKeywords: [
         '习近平',
         '国务院',
@@ -358,7 +360,7 @@ class NewsService {
         'CEO',
         '粉笔',
       ],
-      allowFallback: false,
+      allowFallback: true,
       maxAgeDays: 3,
       relatedBackfillMaxAgeDays: 7,
       relatedMinItems: 3,
@@ -742,7 +744,8 @@ class NewsService {
     final kept = <String>[];
     for (var index = 0; index < paragraphs.length; index++) {
       final paragraph = paragraphs[index];
-      if (_isArticleTailNoise(paragraph) || _looksLikeTailCluster(paragraphs, index)) {
+      if (_isArticleTailNoise(paragraph) ||
+          _looksLikeTailCluster(paragraphs, index)) {
         if (kept.isNotEmpty) break;
         continue;
       }
@@ -755,7 +758,8 @@ class NewsService {
     if (!_looksLikeRelatedTitle(paragraphs[index])) return false;
     var runLength = 0;
     for (var i = index; i < paragraphs.length && i < index + 4; i++) {
-      if (_looksLikeRelatedTitle(paragraphs[i]) || _isArticleTailNoise(paragraphs[i])) {
+      if (_looksLikeRelatedTitle(paragraphs[i]) ||
+          _isArticleTailNoise(paragraphs[i])) {
         runLength += 1;
       } else {
         break;
@@ -1070,13 +1074,14 @@ class NewsService {
     try {
       // 并发请求所有源，避免某个源超时拖垮整个分区
       final results = await Future.wait(
-        category.sources.map((source) async {
+        _sharedSources.map((source) async {
           try {
             final response = await _client
                 .get(Uri.parse(source.url))
                 .timeout(const Duration(seconds: 10));
             if (response.statusCode != 200) return <NewsItem>[];
-            return _parseRss(utf8.decode(response.bodyBytes), source.name);
+            final body = utf8.decode(response.bodyBytes);
+            return _parseRss(body, source.name);
           } catch (_) {
             return <NewsItem>[];
           }
@@ -1140,6 +1145,7 @@ class NewsService {
     final recent = <String, _ScoredNewsItem>{};
 
     for (final item in candidates) {
+      if (item.summary.trim().isEmpty) continue;
       final text = '${item.title} ${item.summary}';
       if (text.contains('�')) continue;
       if (_hasAny(text, category.excludeKeywords)) continue;
@@ -1415,7 +1421,6 @@ class _FeedSource {
 
 class _FeedCategory {
   const _FeedCategory({
-    required this.sources,
     required this.includeKeywords,
     required this.excludeKeywords,
     this.allowFallback = true,
@@ -1425,7 +1430,6 @@ class _FeedCategory {
     this.titleMatchRequired = false,
   });
 
-  final List<_FeedSource> sources;
   final List<String> includeKeywords;
   final List<String> excludeKeywords;
   final bool allowFallback;

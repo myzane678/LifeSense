@@ -4,6 +4,8 @@ import 'package:agconnect_auth/agconnect_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'platform_capabilities.dart';
+
 class AuthService extends ChangeNotifier {
   AuthService();
 
@@ -22,6 +24,12 @@ class AuthService extends ChangeNotifier {
 
   Future<void> initialize() async {
     final prefs = await SharedPreferences.getInstance();
+    if (isWindowsLocalMode) {
+      _isGuestMode = true;
+      _isInitialized = true;
+      notifyListeners();
+      return;
+    }
     _isGuestMode = prefs.getBool(_guestModeKey) ?? false;
 
     if (!_isGuestMode) {

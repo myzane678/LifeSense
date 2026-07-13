@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/weekly_report.dart';
 import '../state/life_entry_provider.dart';
+import '../services/weekly_goals_service.dart';
 
 class WeeklyReportScreen extends StatelessWidget {
   const WeeklyReportScreen({super.key});
@@ -10,6 +11,7 @@ class WeeklyReportScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reports = context.watch<LifeEntryProvider>().weeklyReports;
+    final weeklyGoals = context.watch<WeeklyGoalsService>();
     return Scaffold(
       appBar: AppBar(title: const Text('周报')),
       body: reports.isEmpty
@@ -18,8 +20,10 @@ class WeeklyReportScreen extends StatelessWidget {
               padding: const EdgeInsets.all(20),
               itemCount: reports.length,
               separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) =>
-                  _WeeklyCard(report: reports[index]),
+              itemBuilder: (context, index) => _WeeklyCard(
+                report: reports[index],
+                goalsService: index == 0 ? weeklyGoals : null,
+              ),
             ),
     );
   }
@@ -39,10 +43,7 @@ class _EmptyState extends StatelessWidget {
             color: colorScheme.onSurfaceVariant,
           ),
           const SizedBox(height: 12),
-          Text(
-            '还没有周报数据',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('还没有周报数据', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
             '记录一周后即可生成周报',
@@ -55,9 +56,10 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _WeeklyCard extends StatelessWidget {
-  const _WeeklyCard({required this.report});
+  const _WeeklyCard({required this.report, this.goalsService});
 
   final WeeklyReport report;
+  final WeeklyGoalsService? goalsService;
 
   @override
   Widget build(BuildContext context) {
@@ -105,10 +107,10 @@ class _WeeklyCard extends StatelessWidget {
                   children: [
                     Text(
                       '$score',
-                      style: Theme.of(context)
-                          .textTheme
-                          .displaySmall
-                          ?.copyWith(color: scoreColor, fontWeight: FontWeight.bold),
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                        color: scoreColor,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     Text(
                       '周均分',
@@ -170,9 +172,85 @@ class _WeeklyCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (goalsService != null) ...[
+              const SizedBox(height: 16),
+              const Divider(height: 1),
+              const SizedBox(height: 14),
+              _WeeklyGoalsSection(
+                goals: goalsService!.goals,
+                plan: goalsService!.actionPlanFor(report),
+                report: report,
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+class _WeeklyGoalsSection extends StatelessWidget {
+  const _WeeklyGoalsSection({
+    required this.goals,
+    required this.plan,
+    required this.report,
+  });
+
+  final WeeklyGoals goals;
+  final WeeklyActionPlan plan;
+  final WeeklyReport report;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final progressItems = <String>[
+      if (goals.sleepHours != null)
+        '睡眠 ${report.avgSleep.toStringAsFixed(1)}/${goals.sleepHours!.toStringAsFixed(1)}h',
+      if (goals.waterCups != null)
+        '饮水 ${report.avgWater.toStringAsFixed(1)}/${goals.waterCups}杯',
+      if (goals.focus != null)
+        '专注 ${report.avgFocus.toStringAsFixed(1)}/${goals.focus}分',
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('本周目标', style: Theme.of(context).textTheme.titleSmall),
+        if (progressItems.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            progressItems.join(' · '),
+            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
+          ),
+        ],
+        const SizedBox(height: 14),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.flag_outlined, size: 20, color: colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    plan.title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    plan.message,
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

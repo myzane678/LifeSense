@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -86,7 +87,10 @@ void main() {
     expect(find.text('健康建议'), findsNothing);
   });
 
-  testWidgets('新闻详情使用屏幕注入的服务获取全文', (tester) async {
+  testWidgets('新闻详情按平台使用桌面对话框或移动端抽屉', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final sharedPreferences = await SharedPreferences.getInstance();
     await sharedPreferences.clear();
     await sharedPreferences.setBool('digest_interest_prompt_seen', true);
@@ -96,7 +100,7 @@ void main() {
     );
     final now = DateTime.now();
     await sharedPreferences.setString(
-      'news_cache_v14_study',
+      'news_cache_v18_study',
       jsonEncode([
         {
           'title': '学习方法测试新闻',
@@ -108,7 +112,7 @@ void main() {
       ]),
     );
     await sharedPreferences.setInt(
-      'news_cache_v14_study_ts',
+      'news_cache_v18_study_ts',
       now.millisecondsSinceEpoch,
     );
     final preferences = DigestPreferencesService();
@@ -143,14 +147,109 @@ void main() {
         child: MaterialApp(home: DailyDigestScreen(newsService: newsService)),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
     expect(find.text('学习方法测试新闻'), findsOneWidget);
     await tester.tap(find.text('学习方法测试新闻'));
-    await tester.pumpAndSettle();
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
+    final dialog = find.byType(Dialog);
+    expect(dialog, findsOneWidget);
+    expect(
+      find.descendant(of: dialog, matching: find.byType(Scrollbar)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.byType(SingleChildScrollView)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.byType(ListView)),
+      findsNothing,
+    );
+    expect(find.byType(DraggableScrollableSheet), findsNothing);
     expect(find.textContaining('注入服务返回的完整正文'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pump(const Duration(milliseconds: 300));
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    await tester.tap(find.text('学习方法测试新闻').first);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byType(DraggableScrollableSheet), findsOneWidget);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('Windows 与移动端共享新闻卡摘要和来源排版', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final sharedPreferences = await SharedPreferences.getInstance();
+    await sharedPreferences.clear();
+    await sharedPreferences.setBool('digest_interest_prompt_seen', true);
+    await sharedPreferences.setStringList(
+      'digest_selected_interest_ids_test-user',
+      ['study'],
+    );
+    final now = DateTime.now();
+    await sharedPreferences.setString(
+      'news_cache_v18_study',
+      jsonEncode([
+        {
+          'title': '效率工具测试新闻',
+          'summary': '这是一段用于检查桌面和移动端统一卡片高度的摘要内容。',
+          'link': 'https://example.com/article',
+          'source': '少数派',
+          'publishedAt': now.toIso8601String(),
+        },
+      ]),
+    );
+    await sharedPreferences.setInt(
+      'news_cache_v18_study_ts',
+      now.millisecondsSinceEpoch,
+    );
+    final preferences = DigestPreferencesService();
+    await preferences.initializeForUser('test-user');
+    final provider = LifeEntryProvider(storageService: _FakeStorage(const []));
+    await provider.loadEntries();
+    final newsService = NewsService(
+      client: MockClient((_) async => http.Response('', 500)),
+    );
+
+    Future<Size> pumpCard(TargetPlatform platform) async {
+      debugDefaultTargetPlatformOverride = platform;
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<DigestPreferencesService>.value(
+              value: preferences,
+            ),
+            ChangeNotifierProvider<LifeEntryProvider>.value(value: provider),
+          ],
+          child: MaterialApp(home: DailyDigestScreen(newsService: newsService)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final summary = find.text('这是一段用于检查桌面和移动端统一卡片高度的摘要内容。');
+      expect(summary, findsOneWidget);
+      expect(find.text('少数派'), findsOneWidget);
+      final summaryBox = find.byWidgetPredicate(
+        (widget) => widget is SizedBox && widget.height == 60,
+      );
+      return tester.getSize(summaryBox);
+    }
+
+    final windowsSummarySize = await pumpCard(TargetPlatform.windows);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    final androidSummarySize = await pumpCard(TargetPlatform.android);
+    debugDefaultTargetPlatformOverride = null;
+
+    expect(windowsSummarySize.height, 60);
+    expect(androidSummarySize, windowsSummarySize);
   });
 
   testWidgets('新闻列表支持下拉刷新且使用最新内容优先显示', (tester) async {
@@ -172,18 +271,20 @@ void main() {
         final newest = DateTime(2026, 7, 12, 8, 30);
         final older = DateTime(2026, 7, 11, 20, 13);
         return http.Response.bytes(
-          utf8.encode(_rss([
-            (
-              title: '国务院召开经济政策会议',
-              link: 'https://example.com/new',
-              date: newest,
-            ),
-            (
-              title: '国际组织讨论地区安全',
-              link: 'https://example.com/old',
-              date: older,
-            ),
-          ])),
+          utf8.encode(
+            _rss([
+              (
+                title: '国务院召开经济政策会议',
+                link: 'https://example.com/new',
+                date: newest,
+              ),
+              (
+                title: '国际组织讨论地区安全',
+                link: 'https://example.com/old',
+                date: older,
+              ),
+            ]),
+          ),
           200,
           headers: {'content-type': 'application/xml; charset=utf-8'},
         );

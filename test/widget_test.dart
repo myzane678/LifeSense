@@ -5,6 +5,7 @@ import 'package:life_sense/screens/dashboard_screen.dart';
 import 'package:life_sense/services/digest_preferences_service.dart';
 import 'package:life_sense/services/reminder_service.dart';
 import 'package:life_sense/services/life_storage_service.dart';
+import 'package:life_sense/services/weekly_goals_service.dart';
 import 'package:life_sense/state/life_entry_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -16,13 +17,13 @@ class _FakeStorage extends LifeStorageService {
   Future<List<LifeEntry>> loadEntries() async => _preset;
 
   @override
-  Future<void> saveEntry(LifeEntry entry) async {}
+  Future<bool> saveEntry(LifeEntry entry) async => true;
 
   @override
-  Future<void> saveEntries(List<LifeEntry> entries) async {}
+  Future<bool> saveEntries(List<LifeEntry> entries) async => true;
 
   @override
-  Future<void> clearEntries() async {}
+  Future<void> deleteCloudEntries() async {}
 }
 
 Widget _wrapDashboard(LifeEntryProvider provider) {
@@ -33,6 +34,9 @@ Widget _wrapDashboard(LifeEntryProvider provider) {
         create: (_) => DigestPreferencesService(),
       ),
       ChangeNotifierProvider<ReminderService>(create: (_) => ReminderService()),
+      ChangeNotifierProvider<WeeklyGoalsService>(
+        create: (_) => WeeklyGoalsService(),
+      ),
     ],
     child: MaterialApp(
       routes: {
@@ -55,6 +59,7 @@ void main() {
     expect(find.text('今天还没有记录'), findsOneWidget);
     expect(find.text('立即记录'), findsOneWidget);
     expect(find.text('最近 7 天'), findsOneWidget);
+    expect(find.text('本周目标'), findsOneWidget);
   });
 
   testWidgets('首页有今日记录时显示 ScoreCard', (tester) async {

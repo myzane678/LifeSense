@@ -10,12 +10,18 @@ class UserSettingsRecord {
     required this.reminderEnabled,
     required this.reminderHour,
     required this.reminderMinute,
+    this.goalSleepHours,
+    this.goalWaterCups,
+    this.goalFocus,
   });
 
   final List<String> digestSelectedIds;
   final bool? reminderEnabled;
   final int? reminderHour;
   final int? reminderMinute;
+  final double? goalSleepHours;
+  final int? goalWaterCups;
+  final int? goalFocus;
 }
 
 abstract class UserSettingsRemoteStore {
@@ -48,6 +54,9 @@ class CloudDBUserSettingsRemoteStore implements UserSettingsRemoteStore {
       reminderEnabled: data['reminderEnabled'] as bool?,
       reminderHour: data['reminderHour'] as int?,
       reminderMinute: data['reminderMinute'] as int?,
+      goalSleepHours: (data['goalSleepHours'] as num?)?.toDouble(),
+      goalWaterCups: data['goalWaterCups'] as int?,
+      goalFocus: data['goalFocus'] as int?,
     );
   }
 
@@ -63,6 +72,9 @@ class CloudDBUserSettingsRemoteStore implements UserSettingsRemoteStore {
           'reminderEnabled': record.reminderEnabled ?? false,
           'reminderHour': record.reminderHour ?? 21,
           'reminderMinute': record.reminderMinute ?? 0,
+          'goalSleepHours': record.goalSleepHours,
+          'goalWaterCups': record.goalWaterCups,
+          'goalFocus': record.goalFocus,
         },
       ],
     );
@@ -94,6 +106,7 @@ class UserSettingsService {
   static const _reminderEnabledKey = 'daily_reminder_enabled';
   static const _reminderHourKey = 'daily_reminder_hour';
   static const _reminderMinuteKey = 'daily_reminder_minute';
+  static const _reminderSyncPendingPrefix = 'reminder_sync_pending_';
 
   final UserSettingsRemoteStore _remoteStore;
 
@@ -102,8 +115,15 @@ class UserSettingsService {
 
   Future<UserSettingsRecord?> loadForUser(String uid) => _remoteStore.load(uid);
 
-  Future<void> applyReminderSettings(UserSettingsRecord record) async {
+  Future<void> applyReminderSettings(
+    UserSettingsRecord record, {
+    String? uid,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
+    if (uid != null &&
+        prefs.getBool('$_reminderSyncPendingPrefix$uid') == true) {
+      return;
+    }
     if (record.reminderEnabled != null) {
       await prefs.setBool(_reminderEnabledKey, record.reminderEnabled!);
     }
@@ -127,6 +147,9 @@ class UserSettingsService {
         reminderHour: existing?.reminderHour ?? prefs.getInt(_reminderHourKey),
         reminderMinute:
             existing?.reminderMinute ?? prefs.getInt(_reminderMinuteKey),
+        goalSleepHours: existing?.goalSleepHours,
+        goalWaterCups: existing?.goalWaterCups,
+        goalFocus: existing?.goalFocus,
       ),
     );
   }
@@ -134,15 +157,54 @@ class UserSettingsService {
   Future<void> syncReminderSettings() async {
     final uid = await currentUserId();
     if (uid == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_reminderSyncPendingPrefix$uid', true);
+    try {
+      final existing = await _remoteStore.load(uid);
+      await _remoteStore.save(
+        uid,
+        UserSettingsRecord(
+          digestSelectedIds: existing?.digestSelectedIds ?? const [],
+          reminderEnabled: prefs.getBool(_reminderEnabledKey),
+          reminderHour: prefs.getInt(_reminderHourKey),
+          reminderMinute: prefs.getInt(_reminderMinuteKey),
+          goalSleepHours: existing?.goalSleepHours,
+          goalWaterCups: existing?.goalWaterCups,
+          goalFocus: existing?.goalFocus,
+        ),
+      );
+      await prefs.setBool('$_reminderSyncPendingPrefix$uid', false);
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  Future<void> retryPendingReminderSync(String uid) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('$_reminderSyncPendingPrefix$uid') != true) return;
+    await syncReminderSettings();
+  }
+
+  Future<void> saveWeeklyGoals(
+    String uid, {
+    required double? sleepHours,
+    required int? waterCups,
+    required int? focus,
+  }) async {
     final existing = await _remoteStore.load(uid);
     final prefs = await SharedPreferences.getInstance();
     await _remoteStore.save(
       uid,
       UserSettingsRecord(
         digestSelectedIds: existing?.digestSelectedIds ?? const [],
-        reminderEnabled: prefs.getBool(_reminderEnabledKey),
-        reminderHour: prefs.getInt(_reminderHourKey),
-        reminderMinute: prefs.getInt(_reminderMinuteKey),
+        reminderEnabled:
+            existing?.reminderEnabled ?? prefs.getBool(_reminderEnabledKey),
+        reminderHour: existing?.reminderHour ?? prefs.getInt(_reminderHourKey),
+        reminderMinute:
+            existing?.reminderMinute ?? prefs.getInt(_reminderMinuteKey),
+        goalSleepHours: sleepHours,
+        goalWaterCups: waterCups,
+        goalFocus: focus,
       ),
     );
   }

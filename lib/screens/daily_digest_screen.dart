@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/news_item.dart';
 import '../services/digest_preferences_service.dart';
 import '../services/news_service.dart';
+import '../services/platform_capabilities.dart';
 import '../state/life_entry_provider.dart';
 
 class DailyDigestScreen extends StatefulWidget {
@@ -76,11 +79,15 @@ class _DailyDigestScreenState extends State<DailyDigestScreen>
         .toList();
     setState(() => _isPreparingTabs = true);
     // 只等第一个 Tab 加载完即显示，其余后台静默加载
-    if (newsTabs.isNotEmpty) await _loadTab(newsTabs.first);
+    if (newsTabs.isNotEmpty) {
+      await _loadTab(newsTabs.first, forceRefresh: true);
+    }
     if (!mounted) return;
     setState(() => _isPreparingTabs = false);
     if (newsTabs.length > 1) {
-      await Future.wait(newsTabs.skip(1).map(_loadTab));
+      await Future.wait(
+        newsTabs.skip(1).map((tab) => _loadTab(tab, forceRefresh: true)),
+      );
       if (!mounted) return;
     }
     _hideEmptyNewsTabs();
@@ -361,15 +368,16 @@ class _NewsCardState extends State<_NewsCard> {
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
               ),
-              if (item.summary.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  item.summary,
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 60,
+                child: Text(
+                  item.summary.isEmpty ? '点击查看详情' : item.summary,
                   style: TextStyle(color: cs.onSurfaceVariant, fontSize: 13),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                 ),
-              ],
+              ),
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -391,17 +399,44 @@ class _NewsCardState extends State<_NewsCard> {
   }
 }
 
-class _NewsDetailSheet extends StatefulWidget {
+class _NewsDetailSheet extends StatelessWidget {
   const _NewsDetailSheet({required this.item, required this.newsService});
 
   final NewsItem item;
   final NewsService newsService;
 
   @override
-  State<_NewsDetailSheet> createState() => _NewsDetailSheetState();
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.72,
+      minChildSize: 0.45,
+      maxChildSize: 0.92,
+      builder: (context, controller) => _NewsDetailContent(
+        item: item,
+        newsService: newsService,
+        controller: controller,
+      ),
+    );
+  }
 }
 
-class _NewsDetailSheetState extends State<_NewsDetailSheet> {
+class _NewsDetailContent extends StatefulWidget {
+  const _NewsDetailContent({
+    required this.item,
+    required this.newsService,
+    this.controller,
+  });
+
+  final NewsItem item;
+  final NewsService newsService;
+  final ScrollController? controller;
+
+  @override
+  State<_NewsDetailContent> createState() => _NewsDetailContentState();
+}
+
+class _NewsDetailContentState extends State<_NewsDetailContent> {
   late final Future<ArticleDetail> _detailFuture = widget.newsService
       .fetchArticleDetail(widget.item);
 
@@ -409,19 +444,16 @@ class _NewsDetailSheetState extends State<_NewsDetailSheet> {
   Widget build(BuildContext context) {
     final item = widget.item;
     final cs = Theme.of(context).colorScheme;
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.72,
-      minChildSize: 0.45,
-      maxChildSize: 0.92,
-      builder: (context, controller) => FutureBuilder<ArticleDetail>(
-        future: _detailFuture,
-        builder: (context, snapshot) {
-          final detail = snapshot.data;
-          final publishedAt = detail?.publishedAt ?? item.publishedAt;
-          return ListView(
-            controller: controller,
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+    return FutureBuilder<ArticleDetail>(
+      future: _detailFuture,
+      builder: (context, snapshot) {
+        final detail = snapshot.data;
+        final publishedAt = detail?.publishedAt ?? item.publishedAt;
+        return SingleChildScrollView(
+          controller: widget.controller,
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 item.title,
@@ -444,7 +476,7 @@ class _NewsDetailSheetState extends State<_NewsDetailSheet> {
               const SizedBox(height: 14),
               Text('原文链接', style: Theme.of(context).textTheme.labelMedium),
               const SizedBox(height: 6),
-              SelectableText(
+              Text(
                 item.link,
                 style: TextStyle(color: cs.primary, fontSize: 13),
               ),
@@ -455,9 +487,9 @@ class _NewsDetailSheetState extends State<_NewsDetailSheet> {
                 label: const Text('打开原网页'),
               ),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -487,11 +519,93 @@ class _NewsDetailSheetState extends State<_NewsDetailSheet> {
   }
 }
 
+class _NewsDetailDialog extends StatefulWidget {
+  const _NewsDetailDialog({required this.item, required this.newsService});
+
+  final NewsItem item;
+  final NewsService newsService;
+
+  @override
+  State<_NewsDetailDialog> createState() => _NewsDetailDialogState();
+}
+
+class _NewsDetailDialogState extends State<_NewsDetailDialog> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return Dialog(
+      child: SizedBox(
+        width: math.min(640, size.width - 48),
+        height: math.min(720, size.height * 0.8),
+        child: Column(
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: Tooltip(
+                message: '关闭',
+                child: IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close),
+                ),
+              ),
+            ),
+            Expanded(
+              child: ScrollConfiguration(
+                behavior: ScrollConfiguration.of(
+                  context,
+                ).copyWith(scrollbars: false),
+                child: ScrollbarTheme(
+                  data: ScrollbarThemeData(
+                    minThumbLength: 72,
+                    thumbColor: WidgetStateProperty.resolveWith(
+                      (states) => states.contains(WidgetState.dragged)
+                          ? Colors.black54
+                          : states.contains(WidgetState.hovered)
+                          ? Colors.black38
+                          : Colors.black26,
+                    ),
+                  ),
+                  child: Scrollbar(
+                    controller: _scrollController,
+                    thumbVisibility: true,
+                    thickness: 10,
+                    interactive: true,
+                    child: _NewsDetailContent(
+                      item: widget.item,
+                      newsService: widget.newsService,
+                      controller: _scrollController,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 Future<void> _showNewsDetail(
   BuildContext context,
   NewsItem item,
   NewsService newsService,
 ) {
+  if (isWindowsLocalMode) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) =>
+          _NewsDetailDialog(item: item, newsService: newsService),
+    );
+  }
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,

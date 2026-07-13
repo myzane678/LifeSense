@@ -40,10 +40,10 @@ class DigestPreferencesService extends ChangeNotifier {
     ),
     DigestInterest(
       id: 'study',
-      label: '学习方法',
-      subtitle: '复习、专注、笔记与考试策略',
+      label: '效率工具',
+      subtitle: '时间管理、知识整理与实用工具',
       feedKey: 'study',
-      icon: Icons.school_outlined,
+      icon: Icons.task_alt_outlined,
     ),
     DigestInterest(
       id: 'health',
@@ -61,10 +61,10 @@ class DigestPreferencesService extends ChangeNotifier {
     ),
     DigestInterest(
       id: 'career',
-      label: '职业发展',
-      subtitle: '就业、实习、成长与长期规划',
+      label: '成长规划',
+      subtitle: '个人成长、长期规划与能力提升',
       feedKey: 'career',
-      icon: Icons.work_outline,
+      icon: Icons.route_outlined,
     ),
     DigestInterest(
       id: 'product',
@@ -75,10 +75,10 @@ class DigestPreferencesService extends ChangeNotifier {
     ),
     DigestInterest(
       id: 'campus',
-      label: '校园成长',
-      subtitle: '竞赛、考研、毕业与学生视角',
+      label: '教育观察',
+      subtitle: '教育动态、成长议题与青年视角',
       feedKey: 'campus',
-      icon: Icons.local_library_outlined,
+      icon: Icons.travel_explore_outlined,
     ),
     DigestInterest(
       id: 'politics',
@@ -118,9 +118,17 @@ class DigestPreferencesService extends ChangeNotifier {
     _userId = uid;
     _promptSeen = prefs.getBool(_promptSeenKey) ?? false;
     await _migrateLegacySelection(prefs, uid);
+    final localIds = prefs.getStringList(_selectedIdsKey(uid));
+
+    if (uid == 'guest') {
+      _selectedIds = _sanitizeSelection(localIds ?? defaultSelectedIds);
+      _isInitialized = true;
+      await prefs.setStringList(_selectedIdsKey(uid), _selectedIds);
+      notifyListeners();
+      return;
+    }
 
     final pending = prefs.getBool(_syncPendingKey(uid)) ?? false;
-    final localIds = prefs.getStringList(_selectedIdsKey(uid));
     if (pending && localIds != null) {
       _selectedIds = _sanitizeSelection(localIds);
       _isInitialized = true;
@@ -161,6 +169,10 @@ class DigestPreferencesService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _selectedIds = sanitized;
     await prefs.setStringList(_selectedIdsKey(uid), sanitized);
+    if (uid == 'guest') {
+      notifyListeners();
+      return;
+    }
     await prefs.setBool(_syncPendingKey(uid), true);
     notifyListeners();
     try {

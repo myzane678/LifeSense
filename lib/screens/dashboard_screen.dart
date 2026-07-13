@@ -5,10 +5,12 @@ import 'package:provider/provider.dart';
 import '../models/life_entry.dart';
 import '../services/digest_preferences_service.dart';
 import '../services/reminder_service.dart';
+import '../services/weekly_goals_service.dart';
 import '../state/life_entry_provider.dart';
 import '../widgets/metric_tile.dart';
 import '../widgets/digest_interest_dialog.dart';
 import '../widgets/score_card.dart';
+import '../widgets/weekly_goals_editor.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -96,9 +98,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _editWeeklyGoals() async {
+    final nextGoals = await showWeeklyGoalsEditor(context);
+    if (nextGoals == null || !mounted) return;
+    final goalsService = context.read<WeeklyGoalsService>();
+    final isGuest = context.read<LifeEntryProvider>().isGuestMode;
+    try {
+      await goalsService.setGoals(
+        sleepHours: nextGoals.sleepHours,
+        waterCups: nextGoals.waterCups,
+        focus: nextGoals.focus,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(isGuest ? '本周目标已保存到本机' : '本周目标已更新并同步到云端')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('已保存到本机，云同步失败'),
+          action: SnackBarAction(
+            label: '重试',
+            onPressed: () => goalsService.retryPendingSync(),
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<LifeEntryProvider>();
+    final weeklyGoals = context.watch<WeeklyGoalsService>();
     final reminder = context.watch<ReminderService>();
     final entry = provider.todayEntry;
     final now = DateTime.now();
@@ -133,7 +165,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
               children: [
                 // 同步状态（紧凑）
-                _SyncStatusBar(status: provider.syncStatus),
+                _SyncStatusBar(provider: provider),
                 const SizedBox(height: 8),
                 _MotivationLine(),
                 if (reminder.isInitialized && !reminder.enabled) ...[
@@ -164,6 +196,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 _SevenDayTrendCard(
                   entries: provider.recentSevenDayEntries,
                   consecutiveDays: provider.consecutiveRecordDays,
+                ),
+                const SizedBox(height: 10),
+                _WeeklyGoalsCard(
+                  goals: weeklyGoals.goals,
+                  onTap: _editWeeklyGoals,
                 ),
                 const SizedBox(height: 20),
 
@@ -260,34 +297,73 @@ class _ReminderPromptStrip extends StatelessWidget {
 }
 
 class _SyncStatusBar extends StatelessWidget {
-  const _SyncStatusBar({required this.status});
+  const _SyncStatusBar({required this.provider});
 
-  final SyncStatus status;
+  final LifeEntryProvider provider;
 
   @override
   Widget build(BuildContext context) {
-    if (status == SyncStatus.synced || status == SyncStatus.localCache) {
+    final cs = Theme.of(context).colorScheme;
+    if (provider.syncStatus == SyncStatus.synced) {
       return const SizedBox.shrink();
     }
-    final cs = Theme.of(context).colorScheme;
-    final (icon, text, color) = status == SyncStatus.syncing
-        ? (Icons.sync_outlined, '正在同步', cs.secondary)
-        : (Icons.person_outline, '访客模式 · 数据仅存本机', cs.secondary);
+    if (provider.syncStatus == SyncStatus.syncing) {
+      return _statusRow(
+        context,
+        icon: Icons.sync_outlined,
+        text: '正在同步',
+        color: cs.secondary,
+      );
+    }
+    if (provider.syncStatus == SyncStatus.localOnly) {
+      return _statusRow(
+        context,
+        icon: Icons.person_outline,
+        text: '访客模式 · 数据仅存本机',
+        color: cs.secondary,
+      );
+    }
     return Row(
       children: [
-        Icon(icon, size: 14, color: color),
+        Icon(Icons.cloud_off_outlined, size: 14, color: cs.error),
         const SizedBox(width: 6),
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 12,
-            color: color,
-            fontWeight: FontWeight.w500,
+        Expanded(
+          child: Text(
+            '有 ${provider.pendingSyncCount} 项待同步',
+            style: TextStyle(
+              fontSize: 12,
+              color: cs.error,
+              fontWeight: FontWeight.w500,
+            ),
           ),
+        ),
+        TextButton(
+          onPressed: () => provider.retryPendingSync(),
+          child: const Text('重试'),
         ),
       ],
     );
   }
+
+  Widget _statusRow(
+    BuildContext context, {
+    required IconData icon,
+    required String text,
+    required Color color,
+  }) => Row(
+    children: [
+      Icon(icon, size: 14, color: color),
+      const SizedBox(width: 6),
+      Text(
+        text,
+        style: TextStyle(
+          fontSize: 12,
+          color: color,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    ],
+  );
 }
 
 class _DigestBanner extends StatelessWidget {
@@ -295,7 +371,8 @@ class _DigestBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final digestPreferences = context.watch<DigestPreferencesService>();
-    final digestSubtitle = digestPreferences.isInitialized &&
+    final digestSubtitle =
+        digestPreferences.isInitialized &&
             digestPreferences.selectedInterests.isNotEmpty
         ? '${digestPreferences.selectedLabelText} · 学习工具箱'
         : '前沿内容 · 学习工具箱';
@@ -772,4 +849,57 @@ int _averageScore(List<LifeEntry> entries) {
 
 int _highestScore(List<LifeEntry> entries) {
   return entries.map((e) => e.score).reduce((a, b) => a > b ? a : b);
+}
+
+class _WeeklyGoalsCard extends StatelessWidget {
+  const _WeeklyGoalsCard({required this.goals, required this.onTap});
+  final WeeklyGoals goals;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final items = <String>[
+      if (goals.sleepHours != null)
+        "睡眠 ${goals.sleepHours!.toStringAsFixed(1)}h",
+      if (goals.waterCups != null) "饮水 ${goals.waterCups}杯",
+      if (goals.focus != null) "专注 ${goals.focus}分",
+    ];
+    return Card(
+      elevation: 0,
+      color: cs.secondaryContainer,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(Icons.flag_outlined, color: cs.secondary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("本周目标", style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      items.isEmpty ? "设置睡眠、饮水与专注目标" : items.join(" · "),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.onSecondaryContainer.withAlpha(190),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right, color: cs.onSecondaryContainer),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

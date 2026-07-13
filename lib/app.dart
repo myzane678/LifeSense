@@ -15,6 +15,7 @@ import 'services/auth_service.dart';
 import 'services/digest_preferences_service.dart';
 import 'services/reminder_service.dart';
 import 'services/user_settings_service.dart';
+import 'services/weekly_goals_service.dart';
 import 'state/life_entry_provider.dart';
 import 'state/profile_provider.dart';
 
@@ -102,6 +103,7 @@ class _AuthGateState extends State<_AuthGate> {
       if (_sessionInitialized) {
         _sessionGeneration++;
         context.read<DigestPreferencesService>().resetSession();
+        context.read<WeeklyGoalsService>().resetSession();
       }
       _sessionInitialized = false;
     } else if (authService.isInitialized) {
@@ -120,10 +122,12 @@ class _AuthGateState extends State<_AuthGate> {
     final entryProvider = context.read<LifeEntryProvider>();
     final reminderService = context.read<ReminderService>();
     final digestPrefs = context.read<DigestPreferencesService>();
+    final weeklyGoals = context.read<WeeklyGoalsService>();
     final profileProvider = context.read<ProfileProvider>();
     if (authService.isGuestMode) {
       entryProvider.setGuestMode(true);
       await digestPrefs.initializeForUser('guest');
+      await weeklyGoals.initializeForUser('guest');
       await reminderService.initialize();
       await entryProvider.loadGuestEntries();
       return;
@@ -142,15 +146,20 @@ class _AuthGateState extends State<_AuthGate> {
       return;
     }
     if (cloudSettings != null) {
-      await UserSettingsService.instance.applyReminderSettings(cloudSettings);
+      await UserSettingsService.instance.applyReminderSettings(
+        cloudSettings,
+        uid: uid,
+      );
     }
     await digestPrefs.initializeForUser(uid, cloudRecord: cloudSettings);
+    await weeklyGoals.initializeForUser(uid, cloudRecord: cloudSettings);
     if (!mounted ||
         generation != _sessionGeneration ||
         authService.currentUser?.uid != uid) {
       return;
     }
     await reminderService.initialize();
+    await UserSettingsService.instance.retryPendingReminderSync(uid);
     await entryProvider.loadEntries();
     await profileProvider.loadCloudProfile();
   }

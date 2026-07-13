@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/avatar_storage_service.dart';
+import '../services/platform_capabilities.dart';
 import '../services/profile_service.dart';
 
 class ProfileProvider extends ChangeNotifier {
@@ -29,6 +30,7 @@ class ProfileProvider extends ChangeNotifier {
   }
 
   Future<void> loadCloudProfile() async {
+    if (isWindowsLocalMode) return;
     try {
       final user = await AGCAuth.instance.currentUser;
       final uid = user?.uid;
@@ -68,6 +70,7 @@ class ProfileProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_nicknameKey, _nickname);
     notifyListeners();
+    if (isWindowsLocalMode) return;
     await _profileService.saveProfile(
       nickname: _nickname,
       avatarPath: _avatarPath ?? '',
@@ -95,7 +98,7 @@ class ProfileProvider extends ChangeNotifier {
 
     notifyListeners();
 
-    // 上传到云端，同时更新 CloudDB 里的 avatarPath 记录
+    if (isWindowsLocalMode) return;
     try {
       final user = await AGCAuth.instance.currentUser;
       final uid = user?.uid;

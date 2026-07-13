@@ -7,7 +7,9 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/digest_preferences_service.dart';
 import '../services/reminder_service.dart';
+import '../services/platform_capabilities.dart';
 import '../services/user_settings_service.dart';
+import '../services/weekly_goals_service.dart';
 import '../state/life_entry_provider.dart';
 import '../state/profile_provider.dart';
 import '../widgets/digest_interest_dialog.dart';
@@ -69,12 +71,13 @@ class SettingsScreen extends StatelessWidget {
               subtitle: const Text('将打开系统相册选择图片'),
               onTap: () => Navigator.pop(context, ImageSource.gallery),
             ),
-            ListTile(
-              leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('拍照'),
-              subtitle: const Text('需要同意使用相机权限'),
-              onTap: () => Navigator.pop(context, ImageSource.camera),
-            ),
+            if (!isWindowsLocalMode)
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('拍照'),
+                subtitle: const Text('需要同意使用相机权限'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
           ],
         ),
       ),
@@ -113,9 +116,11 @@ class SettingsScreen extends StatelessWidget {
     try {
       await preferences.setSelectedIds(selected);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('兴趣方向已更新并同步到云端')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isWindowsLocalMode ? '兴趣方向已保存到本机' : '兴趣方向已更新并同步到云端'),
+        ),
+      );
     } catch (_) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -168,6 +173,16 @@ class SettingsScreen extends StatelessWidget {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('提醒时间已更新')));
+  }
+
+  Future<void> retryEntrySync(BuildContext context) async {
+    final synced = await context.read<LifeEntryProvider>().retryPendingSync();
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(synced > 0 ? '已同步 $synced 项本机修改' : '仍有待同步记录，请稍后重试'),
+      ),
+    );
   }
 
   Future<void> recalculateEntries(BuildContext context) async {
@@ -280,6 +295,8 @@ class SettingsScreen extends StatelessWidget {
       await context.read<LifeEntryProvider>().deleteCloudEntries();
       if (!context.mounted) return;
       await context.read<DigestPreferencesService>().clearForUser(uid);
+      if (!context.mounted) return;
+      await context.read<WeeklyGoalsService>().clearForUser(uid);
       if (context.mounted) Navigator.pop(context);
     } catch (_) {
       if (!context.mounted) return;
@@ -353,6 +370,7 @@ class SettingsScreen extends StatelessWidget {
     final profile = context.watch<ProfileProvider>();
     final reminder = context.watch<ReminderService>();
     final digestPreferences = context.watch<DigestPreferencesService>();
+    final isWindows = isWindowsLocalMode;
     final isGuest = provider.isGuestMode;
     final colorScheme = Theme.of(context).colorScheme;
     final email = isGuest
@@ -360,7 +378,10 @@ class SettingsScreen extends StatelessWidget {
         : (context.read<AuthService>().currentUser?.email ?? '');
     final syncText = switch (provider.syncStatus) {
       SyncStatus.synced => '已同步到云端',
-      SyncStatus.localCache => '当前显示本机缓存',
+      SyncStatus.localCache =>
+        provider.hasPendingSync
+            ? '有 ${provider.pendingSyncCount} 项待同步'
+            : '当前显示本机缓存',
       SyncStatus.syncing => '正在同步',
       SyncStatus.localOnly => '访客模式 · 数据仅存本机',
     };
@@ -417,6 +438,19 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
+          if (isWindows)
+            Card(
+              elevation: 0,
+              color: colorScheme.secondaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Windows 本地模式：记录、头像、兴趣和目标仅保存在此电脑；暂不支持登录、云同步、拍照和后台每日提醒。',
+                  style: TextStyle(color: colorScheme.onSecondaryContainer),
+                ),
+              ),
+            ),
+          if (isWindows) const SizedBox(height: 16),
           _SectionLabel('每日速览'),
           Card(
             elevation: 0,
@@ -430,51 +464,68 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          _SectionLabel('日常提醒'),
-          _ReminderCard(
-            reminder: reminder,
-            onToggle: (enabled) => toggleReminder(context, enabled),
-            onChooseTime: () => chooseReminderTime(context),
-          ),
-          const SizedBox(height: 16),
-
-          if (isGuest) ...[
-            Card(
+          if (isWindows) ...[
+            _SectionLabel('日常提醒'),
+            const Card(
               elevation: 0,
-              color: colorScheme.secondaryContainer,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.cloud_upload_outlined,
-                          color: colorScheme.secondary,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '开启云同步',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '注册账号后，记录自动同步到云端，换机或重装后随时恢复。',
-                      style: TextStyle(color: colorScheme.onSecondaryContainer),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: () => exitGuestMode(context),
-                      child: const Text('注册 / 登录账号'),
-                    ),
-                  ],
-                ),
+              child: ListTile(
+                leading: Icon(Icons.notifications_off_outlined),
+                title: Text('后台每日提醒暂不支持'),
+                subtitle: Text('Windows 本地版暂不提供后台通知。'),
               ),
             ),
             const SizedBox(height: 16),
+          ] else ...[
+            _SectionLabel('日常提醒'),
+            _ReminderCard(
+              reminder: reminder,
+              onToggle: (enabled) => toggleReminder(context, enabled),
+              onChooseTime: () => chooseReminderTime(context),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          if (isGuest || isWindows) ...[
+            if (!isWindows) ...[
+              Card(
+                elevation: 0,
+                color: colorScheme.secondaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.cloud_upload_outlined,
+                            color: colorScheme.secondary,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '开启云同步',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '注册账号后，记录自动同步到云端，换机或重装后随时恢复。',
+                        style: TextStyle(
+                          color: colorScheme.onSecondaryContainer,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton(
+                        onPressed: () => exitGuestMode(context),
+                        child: const Text('注册 / 登录账号'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
             _SectionLabel('数据管理'),
             Card(
               elevation: 0,
@@ -503,17 +554,19 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            _SectionLabel('账号'),
-            Card(
-              elevation: 0,
-              color: colorScheme.surfaceContainerLow,
-              child: ListTile(
-                leading: const Icon(Icons.logout),
-                title: const Text('退出访客模式'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => exitGuestMode(context),
+            if (!isWindows) ...[
+              _SectionLabel('账号'),
+              Card(
+                elevation: 0,
+                color: colorScheme.surfaceContainerLow,
+                child: ListTile(
+                  leading: const Icon(Icons.logout),
+                  title: const Text('退出访客模式'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => exitGuestMode(context),
+                ),
               ),
-            ),
+            ],
           ] else ...[
             _SectionLabel('数据管理'),
             Card(
@@ -521,6 +574,12 @@ class SettingsScreen extends StatelessWidget {
               color: colorScheme.surfaceContainerLow,
               child: Column(
                 children: [
+                  if (provider.hasPendingSync)
+                    ListTile(
+                      title: Text('有 ${provider.pendingSyncCount} 项待同步'),
+                      trailing: const Icon(Icons.sync),
+                      onTap: () => retryEntrySync(context),
+                    ),
                   ListTile(
                     leading: const Icon(Icons.phone_android_outlined),
                     title: const Text('清空本机缓存'),
@@ -603,11 +662,23 @@ class _ReminderCard extends StatelessWidget {
             secondary: const Icon(Icons.notifications_active_outlined),
             title: const Text('每日记录提醒'),
             subtitle: Text(
-              reminder.enabled ? '每天 ${reminder.reminderTimeText} 提醒' : '已关闭',
+              reminder.schedulePending
+                  ? '提醒尚未安排，点此重试'
+                  : reminder.enabled
+                  ? '每天 ${reminder.reminderTimeText} 提醒'
+                  : '已关闭',
             ),
             value: reminder.enabled,
             onChanged: reminder.isInitialized ? onToggle : null,
           ),
+          if (reminder.schedulePending) ...[
+            const Divider(indent: 56, height: 0),
+            ListTile(
+              leading: const Icon(Icons.refresh_outlined),
+              title: const Text('重试安排提醒'),
+              onTap: reminder.retrySchedule,
+            ),
+          ],
           if (reminder.enabled) ...[
             const Divider(indent: 56, height: 0),
             ListTile(

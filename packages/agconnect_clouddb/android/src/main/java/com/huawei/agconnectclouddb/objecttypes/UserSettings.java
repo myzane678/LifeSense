@@ -24,6 +24,12 @@ public final class UserSettings extends CloudDBZoneObject {
 
     private Integer reminderMinute;
 
+    private Double goalSleepHours;
+
+    private Integer goalWaterCups;
+
+    private Integer goalFocus;
+
     public UserSettings() {
         super(UserSettings.class);
     }
@@ -66,5 +72,29 @@ public final class UserSettings extends CloudDBZoneObject {
 
     public Integer getReminderMinute() {
         return reminderMinute;
+    }
+
+    public void setGoalSleepHours(Double goalSleepHours) {
+        this.goalSleepHours = goalSleepHours;
+    }
+
+    public Double getGoalSleepHours() {
+        return goalSleepHours;
+    }
+
+    public void setGoalWaterCups(Integer goalWaterCups) {
+        this.goalWaterCups = goalWaterCups;
+    }
+
+    public Integer getGoalWaterCups() {
+        return goalWaterCups;
+    }
+
+    public void setGoalFocus(Integer goalFocus) {
+        this.goalFocus = goalFocus;
+    }
+
+    public Integer getGoalFocus() {
+        return goalFocus;
     }
 }

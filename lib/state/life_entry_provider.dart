@@ -23,8 +23,13 @@ class LifeEntryProvider extends ChangeNotifier {
   bool _isLoading = true;
   SyncStatus _syncStatus = SyncStatus.syncing;
   bool _isGuestMode = false;
+  int _pendingSyncCount = 0;
+  String? _lastSyncError;
 
   bool get isGuestMode => _isGuestMode;
+  int get pendingSyncCount => _pendingSyncCount;
+  bool get hasPendingSync => _pendingSyncCount > 0;
+  String? get lastSyncError => _lastSyncError;
 
   void setGuestMode(bool value) {
     _isGuestMode = value;
@@ -35,6 +40,14 @@ class LifeEntryProvider extends ChangeNotifier {
   List<LifeEntry> get entries => List.unmodifiable(_entries);
   bool get isLoading => _isLoading;
   SyncStatus get syncStatus => _syncStatus;
+
+  void _updateSyncState({String? error}) {
+    _pendingSyncCount = _storageService.pendingSyncCount;
+    _lastSyncError = error;
+    _syncStatus = _isGuestMode
+        ? SyncStatus.localOnly
+        : (_pendingSyncCount > 0 ? SyncStatus.localCache : SyncStatus.synced);
+  }
 
   List<LifeEntry?> get recentSevenDayEntries {
     final today = DateTime.now();
@@ -96,15 +109,19 @@ class LifeEntryProvider extends ChangeNotifier {
     final grouped = <DateTime, List<LifeEntry>>{};
     for (final entry in _entries) {
       final d = entry.createdAt;
-      final monday = DateTime(d.year, d.month, d.day)
-          .subtract(Duration(days: d.weekday - 1));
+      final monday = DateTime(
+        d.year,
+        d.month,
+        d.day,
+      ).subtract(Duration(days: d.weekday - 1));
       grouped.putIfAbsent(monday, () => []).add(entry);
     }
 
-    final reports = grouped.entries
-        .map((e) => WeeklyReport.fromEntries(e.value, e.key))
-        .toList()
-      ..sort((a, b) => b.startDate.compareTo(a.startDate));
+    final reports =
+        grouped.entries
+            .map((e) => WeeklyReport.fromEntries(e.value, e.key))
+            .toList()
+          ..sort((a, b) => b.startDate.compareTo(a.startDate));
 
     return reports;
   }
@@ -132,14 +149,19 @@ class LifeEntryProvider extends ChangeNotifier {
       _entries
         ..clear()
         ..addAll(loadedEntries);
-      _syncStatus = _storageService.lastLoadUsedLocalCache
+      _pendingSyncCount = _storageService.pendingSyncCount;
+      _lastSyncError = null;
+      _syncStatus =
+          _pendingSyncCount > 0 || _storageService.lastLoadUsedLocalCache
           ? SyncStatus.localCache
           : SyncStatus.synced;
     } on TimeoutException {
-      _entries.clear();
+      _pendingSyncCount = _storageService.pendingSyncCount;
+      _lastSyncError = '同步超时';
       _syncStatus = SyncStatus.localCache;
     } catch (_) {
-      _entries.clear();
+      _pendingSyncCount = _storageService.pendingSyncCount;
+      _lastSyncError = '云同步失败';
       _syncStatus = SyncStatus.localCache;
     } finally {
       _isLoading = false;
@@ -204,17 +226,19 @@ class LifeEntryProvider extends ChangeNotifier {
       await _storageService
           .saveEntries(recalculated)
           .timeout(const Duration(seconds: 15));
-      _syncStatus = SyncStatus.synced;
+      _updateSyncState();
     } catch (_) {
-      _syncStatus = SyncStatus.localCache;
+      _updateSyncState(error: '云同步失败');
     }
     notifyListeners();
   }
 
   // 返回 (旧分数, 旧状态, 新分数, 新状态) 供 UI 展示对比
   Future<(int, String, int, String)> updateEntry(LifeEntry entry) async {
-    final oldEntry = _entries.firstWhere((e) => e.id == entry.id,
-        orElse: () => entry);
+    final oldEntry = _entries.firstWhere(
+      (e) => e.id == entry.id,
+      orElse: () => entry,
+    );
     final oldScore = oldEntry.score;
     final oldStatus = oldEntry.status;
     final score = _scoreService.calculateScore(
@@ -266,10 +290,12 @@ class LifeEntryProvider extends ChangeNotifier {
     _syncStatus = SyncStatus.syncing;
     notifyListeners();
     try {
-      await _storageService.saveEntry(updated).timeout(const Duration(seconds: 8));
-      _syncStatus = SyncStatus.synced;
+      await _storageService
+          .saveEntry(updated)
+          .timeout(const Duration(seconds: 8));
+      _updateSyncState();
     } catch (_) {
-      _syncStatus = SyncStatus.localCache;
+      _updateSyncState(error: '云同步失败');
     }
     notifyListeners();
     return (oldScore, oldStatus, score, updated.status);
@@ -336,16 +362,15 @@ class LifeEntryProvider extends ChangeNotifier {
       await _storageService
           .saveEntry(entry)
           .timeout(const Duration(seconds: 8));
-      _syncStatus = SyncStatus.synced;
-      notifyListeners();
+      _updateSyncState();
     } catch (_) {
-      _syncStatus = SyncStatus.localCache;
-      notifyListeners();
-      rethrow;
+      _updateSyncState(error: '云同步失败');
     }
+    notifyListeners();
   }
 
   Future<bool> restoreFromCloud() async {
+    if (hasPendingSync) return false;
     _syncStatus = SyncStatus.syncing;
     notifyListeners();
     final cloudEntries = await _storageService.loadCloudEntries().timeout(
@@ -366,6 +391,7 @@ class LifeEntryProvider extends ChangeNotifier {
   }
 
   Future<bool> clearLocalCache() async {
+    if (hasPendingSync) return false;
     final cloudEntries = await _storageService.loadCloudEntries().timeout(
       const Duration(seconds: 8),
     );
@@ -389,11 +415,33 @@ class LifeEntryProvider extends ChangeNotifier {
       await _storageService.deleteGuestEntry(entry);
       return;
     }
-    _syncStatus = SyncStatus.localCache;
-    await _storageService
-        .deleteEntry(entry)
-        .timeout(const Duration(seconds: 8));
+    _syncStatus = SyncStatus.syncing;
     notifyListeners();
+    try {
+      await _storageService
+          .deleteEntry(entry)
+          .timeout(const Duration(seconds: 8));
+      _updateSyncState();
+    } catch (_) {
+      _updateSyncState(error: '云同步失败');
+    }
+    notifyListeners();
+  }
+
+  Future<int> retryPendingSync() async {
+    if (_isGuestMode) return 0;
+    _syncStatus = SyncStatus.syncing;
+    notifyListeners();
+    try {
+      final synced = await _storageService.retryPendingSync();
+      _updateSyncState();
+      return synced;
+    } catch (_) {
+      _updateSyncState(error: '云同步失败');
+      return 0;
+    } finally {
+      notifyListeners();
+    }
   }
 
   Future<void> deleteCloudEntries() async {
